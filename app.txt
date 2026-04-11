@@ -1,0 +1,574 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { 
+  Search, Paperclip, Send, User, MessageSquare, 
+  Calendar, Settings, Stethoscope, Clock, CheckCheck, Menu, FileText, Check,
+  Zap, Image as ImageIcon, Camera, File, X,
+  Instagram, MessageCircle, ArrowRightLeft, UserCheck, EyeOff, Lock, Unlock, LayoutTemplate,
+  CheckCircle, AlertCircle, Info, BugPlay, Smile, Mic, Play, Headphones, CornerUpLeft
+} from 'lucide-react';
+
+// ==========================================
+// 🧠 SERVIDOR SIMULADO (BACKEND / API MOCK)
+// ==========================================
+const BackendSimulado = {
+  enviarMensagem: async (telefone, texto) => {
+    return new Promise(resolve => {
+      setTimeout(() => resolve({ success: true, messageId: `msg_${Date.now()}` }), 800);
+    });
+  },
+  buscarContextoPaciente: async (telefone) => {
+    return new Promise(resolve => {
+      setTimeout(() => {
+        if (telefone.includes('0001')) resolve({ found: true, patient: { name: 'João Pedro Silva', age: '6 anos', therapies: ['Fonoaudiologia', 'T.O.'], nextAppointment: 'Amanhã, 14:00 (Fono)', alert: null } });
+        else if (telefone.includes('0003')) resolve({ found: true, patient: { name: 'Sofia Almeida', age: '8 anos', therapies: ['Psicologia'], nextAppointment: 'Hoje, 10:30 (Psico)', alert: 'Mensalidade pendente' } });
+        else resolve({ found: false });
+      }, 500);
+    });
+  },
+  confirmarPresenca: async (pacienteId) => {
+    return new Promise(resolve => {
+      setTimeout(() => resolve({ success: true }), 1000);
+    });
+  }
+};
+
+
+// ==========================================
+// 💻 FRONTEND (INTERFACE AFETO SAC)
+// ==========================================
+export default function App() {
+  const [activeChat, setActiveChat] = useState(1);
+  const [messageText, setMessageText] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [activeFilter, setActiveFilter] = useState('Todos');
+  const [activeMenu, setActiveMenu] = useState('chat');
+  const [toastMessage, setToastMessage] = useState(null);
+  
+  // UI States
+  const [showAttachments, setShowAttachments] = useState(false);
+  const [showQuickReplies, setShowQuickReplies] = useState(false);
+  const [showPatientModal, setShowPatientModal] = useState(false);
+  const [isInternalNote, setIsInternalNote] = useState(false); 
+  const [showTemplateModal, setShowTemplateModal] = useState(false); 
+  const [isSending, setIsSending] = useState(false);
+  
+  // LOTE 6: Estado de citação de mensagem (Reply)
+  const [replyingTo, setReplyingTo] = useState(null);
+
+  const messagesEndRef = useRef(null);
+
+  // DB States
+  const [chatList, setChatList] = useState([
+    {
+      id: 1, phone: '558299990001', name: 'Maria (Mãe do João)', lastMessage: '🎙️ Áudio (0:45)', time: '10:52', unread: 0, status: 'Em atendimento', agent: 'Adriel', channel: 'whatsapp', is24hOpen: true, isTyping: false, tags: [{ label: 'Fono', color: 'bg-blue-100 text-blue-700' }], patient: { name: 'João Pedro Silva', age: '6 anos', therapies: ['Fonoaudiologia', 'T.O.'], nextAppointment: 'Amanhã, 14:00 (Fono)' }
+    },
+    {
+      id: 2, phone: '558299990002', name: 'Ana Lúcia', lastMessage: 'Olá, gostaria de informações.', time: '09:15', unread: 1, status: 'Aguardando', waitTime: '2m', slaBreached: false, agent: null, channel: 'instagram', is24hOpen: false, isTyping: false, tags: [{ label: 'Novo Lead', color: 'bg-emerald-100 text-emerald-700' }], patient: null 
+    },
+    {
+      id: 3, phone: '558299990003', name: 'Carlos (Pai da Sofia)', lastMessage: 'Estou na recepção.', time: '10:30', unread: 2, status: 'Aguardando', waitTime: '15m', slaBreached: true, agent: null, channel: 'whatsapp', is24hOpen: true, isTyping: false, tags: [{ label: 'Psicologia', color: 'bg-purple-100 text-purple-700' }], patient: { name: 'Sofia Almeida', age: '8 anos', therapies: ['Psicologia'], nextAppointment: 'Hoje, 10:30 (Psico)', alert: 'Mensalidade pendente' }
+    }
+  ]);
+
+  const [chatMessages, setChatMessages] = useState({
+    1: [
+      { id: 1, sender: 'bot', type: 'text', text: 'Bom dia, Maria! A sessão de Fono do João está confirmada?', time: '10:35', status: 'read' },
+      { id: 2, sender: 'client', type: 'text', text: 'Perfeito! Sim, ele vai na sessão de amanhã! Muito obrigada.', time: '10:42' },
+      { id: 3, sender: 'bot', type: 'document', fileName: 'Recibo_Sessoes_Joao.pdf', fileSize: '150 KB', text: 'Segue o recibo das sessões desta semana.', time: '10:48', status: 'read' },
+      { id: 4, sender: 'client', type: 'image', imageUrl: 'https://images.unsplash.com/photo-1586281380349-632531db7ed4?auto=format&fit=crop&q=80&w=300&h=200', text: 'Tirei foto da carteirinha nova dele.', time: '10:50' },
+      { id: 5, sender: 'bot', type: 'audio', duration: '0:45', time: '10:52', status: 'delivered' }
+    ],
+    2: [
+      { id: 1, sender: 'client', type: 'text', text: 'Olá, gostaria de informações sobre as terapias.', time: '09:15' }
+    ],
+    3: [
+      { id: 1, sender: 'client', type: 'text', text: 'Estou na recepção, posso subir?', time: '10:30' }
+    ]
+  });
+
+  const showToast = (msg) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [chatMessages, activeChat]);
+
+  const handleSendMessage = async () => {
+    if (!messageText.trim() || isSending) return;
+    
+    const textoParaEnviar = messageText;
+    const isNota = isInternalNote;
+    
+    // LOTE 6: Captura o contexto da resposta (Reply)
+    const quoteContext = replyingTo ? { sender: replyingTo.sender, text: replyingTo.text || (replyingTo.type === 'audio' ? 'Áudio' : replyingTo.type === 'image' ? 'Imagem' : 'Documento') } : null;
+
+    setMessageText('');
+    setIsInternalNote(false);
+    setReplyingTo(null);
+    setIsSending(true);
+
+    const novaId = Date.now();
+    const tempMessage = {
+      id: novaId, sender: 'bot', type: 'text', text: textoParaEnviar, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), isInternal: isNota, status: 'sending', replyTo: quoteContext
+    };
+
+    setChatMessages(prev => ({ ...prev, [activeChat]: [...(prev[activeChat] || []), tempMessage] }));
+
+    if (!isNota) {
+      await BackendSimulado.enviarMensagem(chatList.find(c => c.id === activeChat).phone, textoParaEnviar);
+      setChatMessages(prev => ({ ...prev, [activeChat]: prev[activeChat].map(msg => msg.id === novaId ? { ...msg, status: 'delivered' } : msg) }));
+    } else {
+      setChatMessages(prev => ({ ...prev, [activeChat]: prev[activeChat].map(msg => msg.id === novaId ? { ...msg, status: 'saved' } : msg) }));
+    }
+    
+    setIsSending(false);
+    setChatList(prev => prev.map(chat => chat.id === activeChat ? { ...chat, lastMessage: (isNota ? '🔒 Nota interna' : textoParaEnviar), time: 'Agora' } : chat));
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') handleSendMessage();
+  };
+
+  const handleChatButtonClick = (btnText) => {
+    const cleanText = btnText.replace(/^[^\w\s]+/, '').trim();
+    const autoReply = { id: Date.now(), sender: 'client', type: 'text', text: cleanText, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), isInternal: false };
+    setChatMessages(prev => ({ ...prev, [activeChat]: [...(prev[activeChat] || []), autoReply] }));
+  };
+
+  const handleEndChat = () => {
+    setChatList(prev => prev.map(chat => chat.id === activeChat ? { ...chat, status: 'Finalizado' } : chat));
+    const npsMessage = { id: Date.now(), sender: 'bot', type: 'text', text: 'Atendimento finalizado por Adriel. Como você avalia a sua experiência conosco hoje?', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), isInternal: false, buttons: ['⭐⭐⭐⭐⭐ Ótimo', '⭐⭐⭐ Razoável', '⭐ Ruim'] };
+    setChatMessages(prev => ({ ...prev, [activeChat]: [...(prev[activeChat] || []), npsMessage] }));
+  };
+
+  const handleConfirmarPresenca = async () => {
+    showToast('Comunicando com o Afeto Clinic...');
+    await BackendSimulado.confirmarPresenca(activeChat);
+    showToast('Presença confirmada no sistema da clínica!');
+  };
+
+  // LOTE 6: Simulação de Webhook com Indicador de Digitação
+  const simularWebhookRecebido = () => {
+    const pacienteMock = 3; 
+    
+    // Ativa o "isTyping"
+    setChatList(prev => prev.map(chat => chat.id === pacienteMock ? { ...chat, isTyping: true } : chat));
+    if (activeChat !== pacienteMock) showToast('Carlos está digitando...');
+
+    // Espera 2.5s antes de entregar a mensagem
+    setTimeout(() => {
+      const newMessage = { id: Date.now(), sender: 'client', type: 'text', text: 'Já falei com a recepcionista. A Sofia já entrou na sala.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+      setChatMessages(prev => ({ ...prev, [pacienteMock]: [...(prev[pacienteMock] || []), newMessage] }));
+      
+      // Desativa o "isTyping" e atualiza a última mensagem
+      setChatList(prev => prev.map(chat => chat.id === pacienteMock ? { ...chat, lastMessage: newMessage.text, unread: chat.unread + 1, time: 'Agora', isTyping: false } : chat));
+    }, 2500);
+  };
+
+  const handleAssumirChat = () => {
+    setChatList(prev => prev.map(chat => chat.id === activeChat ? { ...chat, status: 'Em atendimento', agent: 'Adriel', slaBreached: false, waitTime: null, unread: 0 } : chat));
+    const msg = { id: Date.now(), sender: 'bot', type: 'text', text: 'Olá! Meu nome é Adriel e darei continuidade ao seu atendimento.', time: 'Agora', status: 'delivered' };
+    setChatMessages(prev => ({ ...prev, [activeChat]: [...(prev[activeChat] || []), msg] }));
+  };
+
+  const activeChatData = chatList.find(c => c.id === activeChat);
+  const currentMessages = chatMessages[activeChat] || [];
+  const filteredChats = chatList.filter(chat => activeFilter === 'Todos' ? true : chat.status === 'Aguardando');
+
+  const quickReplies = [
+    "Olá! Como posso ajudar?",
+    "Sua sessão está confirmada para as 14h.",
+    "O terapeuta já está aguardando na sala.",
+    "Infelizmente não temos esse horário disponível no momento.",
+    "Poderia me enviar a foto da carteirinha do convênio?"
+  ];
+
+  return (
+    <div className="flex h-screen bg-slate-100 font-sans text-slate-800 relative overflow-hidden">
+      
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-6 py-3 rounded-full shadow-2xl z-[200] animate-in fade-in slide-in-from-top-4 flex items-center gap-2">
+          <Info size={18} className="text-teal-400" />
+          {toastMessage}
+        </div>
+      )}
+
+      {/* Ferramenta de Testes */}
+      <div className="fixed bottom-4 left-4 z-50">
+        <button onClick={simularWebhookRecebido} className="bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold px-4 py-3 rounded-full shadow-lg flex items-center gap-2 transition-all">
+          <BugPlay size={16} /> Simular Webhook (Paciente)
+        </button>
+      </div>
+
+      {/* 1. BARRA LATERAL */}
+      <div className="w-20 bg-teal-700 flex flex-col items-center py-6 justify-between shadow-lg z-10 flex-shrink-0 relative">
+        <div className="flex flex-col gap-8 w-full items-center">
+          <div className="bg-white p-2 rounded-xl shadow-sm mb-4 cursor-pointer">
+            <span className="text-teal-700 font-bold text-xl">Af</span>
+          </div>
+          <button onClick={() => setActiveMenu('chat')} className={`p-3 rounded-xl transition-colors relative group ${activeMenu === 'chat' ? 'bg-teal-800 text-white' : 'text-teal-200 hover:text-white hover:bg-teal-600'}`}>
+            <MessageSquare size={24} />
+          </button>
+          <button onClick={() => setActiveMenu('contacts')} className={`p-3 rounded-xl transition-colors ${activeMenu === 'contacts' ? 'bg-teal-800 text-white' : 'text-teal-200 hover:text-white hover:bg-teal-600'}`}><User size={24} /></button>
+        </div>
+        <button className="p-3 rounded-xl text-teal-200 hover:text-white hover:bg-teal-600"><Settings size={24} /></button>
+      </div>
+
+      {activeMenu === 'chat' ? (
+        <>
+          {/* 2. LISTA DE CONVERSAS */}
+          <div className="w-80 bg-white border-r border-slate-200 flex flex-col shadow-sm z-0 flex-shrink-0">
+            <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <h1 className="font-bold text-xl text-teal-800">Afeto SAC</h1>
+            </div>
+            
+            <div className="flex px-4 gap-2 py-3 border-b border-slate-100">
+              <button onClick={() => setActiveFilter('Todos')} className={`text-xs px-3 py-1 rounded-full font-medium transition-colors ${activeFilter === 'Todos' ? 'bg-teal-100 text-teal-800' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>Todos</button>
+              <button onClick={() => setActiveFilter('Aguardando')} className={`text-xs px-3 py-1 rounded-full font-medium transition-colors ${activeFilter === 'Aguardando' ? 'bg-teal-100 text-teal-800' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>Aguardando</button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              {filteredChats.map(chat => (
+                  <div key={chat.id} onClick={() => { setActiveChat(chat.id); setChatList(prev => prev.map(c => c.id === chat.id ? {...c, unread: 0} : c)); }} className={`p-4 border-b border-slate-50 cursor-pointer transition-colors flex gap-3 hover:bg-slate-50 ${activeChat === chat.id ? 'bg-teal-50 border-l-4 border-l-teal-600' : 'border-l-4 border-l-transparent'}`}>
+                    <div className="w-12 h-12 bg-slate-200 rounded-full flex items-center justify-center flex-shrink-0 text-slate-500 font-bold text-lg relative">
+                      {chat.name.charAt(0)}
+                      {chat.slaBreached && <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-white flex items-center justify-center"><AlertCircle size={10} className="text-white" /></div>}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between items-center mb-1">
+                        <h2 className="font-semibold text-slate-800 truncate text-sm flex items-center gap-1">
+                          {chat.channel === 'whatsapp' ? <MessageCircle size={12} className="text-green-500"/> : <Instagram size={12} className="text-pink-500"/>} {chat.name}
+                        </h2>
+                        <span className={`text-[10px] ${chat.unread > 0 ? 'text-teal-600 font-bold' : 'text-slate-400'}`}>{chat.time}</span>
+                      </div>
+                      <div className="flex justify-between items-start">
+                        {/* LOTE 6: Feedback visual de Digitação na Lista */}
+                        {chat.isTyping ? (
+                          <p className="text-xs text-teal-600 font-medium italic animate-pulse">Digitando...</p>
+                        ) : (
+                          <p className={`text-xs truncate pr-2 ${chat.unread > 0 ? 'text-slate-800 font-medium' : 'text-slate-500'}`}>{chat.lastMessage}</p>
+                        )}
+                        
+                        {chat.unread > 0 && !chat.isTyping && <span className="bg-teal-500 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5">{chat.unread}</span>}
+                      </div>
+                      <div className="flex flex-wrap gap-1 mt-1.5 items-center">
+                        {chat.status === 'Aguardando' && chat.waitTime && <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 ${chat.slaBreached ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'}`}><Clock size={10} /> {chat.waitTime}</span>}
+                        {chat.tags && chat.tags.map((tag, idx) => <span key={idx} className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${tag.color}`}>{tag.label}</span>)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </div>
+
+          {/* 3. ÁREA DE CHAT */}
+          <div className="flex-1 flex flex-col bg-[#e5ddd5] relative min-w-0">
+            <div className="h-16 bg-white border-b border-slate-200 flex items-center px-6 justify-between shadow-sm z-10 flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-teal-100 rounded-full flex items-center justify-center text-teal-700 font-bold">
+                  {activeChatData?.name.charAt(0)}
+                </div>
+                <div>
+                  <h2 className="font-bold text-slate-800 flex items-center gap-2">{activeChatData?.name}</h2>
+                  
+                  {/* LOTE 6: Feedback de Digitação no Cabeçalho */}
+                  {activeChatData?.isTyping ? (
+                    <p className="text-xs text-teal-600 font-medium italic animate-pulse">Digitando...</p>
+                  ) : activeChatData?.status === 'Aguardando' ? (
+                    <p className="text-xs text-orange-500 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span> Aguardando Bot</p>
+                  ) : (
+                    <p className="text-xs text-teal-600 flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-teal-500"></span> Atendido por: {activeChatData?.agent}</p>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2 items-center">
+                {activeChatData?.status === 'Aguardando' && (
+                  <button onClick={handleAssumirChat} className="bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium transition-colors shadow-sm">Assumir</button>
+                )}
+                <button onClick={() => showToast('Módulo Transferir (Em breve)')} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-sm border border-slate-200">Transferir</button>
+                <button onClick={handleEndChat} className="bg-red-50 text-red-600 px-3 py-1.5 rounded-lg text-sm border border-red-200">Finalizar</button>
+              </div>
+            </div>
+
+            <div className="absolute inset-0 opacity-40 bg-[url('https://i.pinimg.com/originals/8f/ba/cb/8fbacbd464e996966eb9d4a6b7a9c21e.jpg')] bg-repeat z-0 pointer-events-none mix-blend-multiply"></div>
+
+            <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-4 z-10 pb-20">
+              {currentMessages.map((msg) => (
+                // LOTE 6: Container 'group' adicionado para revelar o botão de Responder
+                <div key={msg.id} className={`flex w-full items-center gap-2 group ${msg.sender === 'client' ? 'justify-start' : 'justify-end'}`}>
+                  
+                  {/* Botão Responder (Lado esquerdo se enviada por você) */}
+                  {msg.sender !== 'client' && (
+                    <button onClick={() => setReplyingTo(msg)} className="opacity-0 group-hover:opacity-100 p-2 bg-white/60 hover:bg-white rounded-full text-slate-400 hover:text-teal-600 transition-all shadow-sm">
+                      <CornerUpLeft size={16}/>
+                    </button>
+                  )}
+
+                  <div className={`${msg.isInternal ? 'bg-amber-100 border-amber-200' : msg.sender === 'client' ? 'bg-white rounded-tl-none border-slate-100' : 'bg-teal-50 rounded-tr-none border-teal-100'} p-3 rounded-2xl max-w-md shadow-sm border relative`}>
+                    {msg.isInternal && <div className="text-amber-700 text-xs font-bold mb-1 flex items-center gap-1"><EyeOff size={12}/> Nota Interna</div>}
+                    
+                    {/* LOTE 6: Renderização da Citação (Reply) */}
+                    {msg.replyTo && (
+                      <div className="bg-black/5 border-l-4 border-teal-500 p-2 rounded mb-2 text-left">
+                        <span className="font-bold text-teal-700 text-xs block">{msg.replyTo.sender === 'client' ? activeChatData.name : 'Você'}</span>
+                        <span className="text-slate-600 text-xs line-clamp-1">{msg.replyTo.text}</span>
+                      </div>
+                    )}
+
+                    {/* Renderização de Mídia Rica */}
+                    {msg.type === 'image' && (
+                      <div className="mb-2">
+                        <img src={msg.imageUrl} alt="Anexo" className="rounded-xl w-64 h-40 object-cover border border-slate-200/50 cursor-pointer" onClick={() => showToast('Abrir visualizador de imagens')} />
+                      </div>
+                    )}
+
+                    {msg.type === 'document' && (
+                      <div className="flex items-center gap-3 bg-slate-100/80 p-3 rounded-xl mb-2 border border-slate-200/50 cursor-pointer hover:bg-slate-200/80 transition-colors" onClick={() => showToast('Fazer download do PDF')}>
+                         <div className="bg-red-100 text-red-600 p-2 rounded-lg flex-shrink-0"><FileText size={20} /></div>
+                         <div className="flex-1 min-w-0">
+                           <p className="text-sm font-semibold text-slate-700 truncate">{msg.fileName}</p>
+                           <p className="text-xs text-slate-500">{msg.fileSize} • PDF</p>
+                         </div>
+                      </div>
+                    )}
+
+                    {msg.type === 'audio' && (
+                      <div className="flex items-center gap-3 bg-slate-100/60 p-2 rounded-xl mb-1 min-w-[200px]">
+                        <div className="relative">
+                          <img src="https://i.pravatar.cc/100?img=1" className="w-10 h-10 rounded-full border border-slate-200" alt="Avatar" />
+                          <div className="absolute -bottom-1 -right-1 bg-teal-500 text-white rounded-full p-1"><Headphones size={8}/></div>
+                        </div>
+                        <button onClick={() => showToast('Reproduzir áudio')} className="text-teal-600 hover:text-teal-700 flex-shrink-0">
+                          <Play size={24} className="ml-0.5 fill-current" />
+                        </button>
+                        <div className="flex-1 h-1.5 bg-slate-300 rounded-full relative overflow-hidden">
+                          <div className="absolute left-0 top-0 h-full bg-teal-500 w-1/3 rounded-full"></div>
+                        </div>
+                        <span className="text-xs text-slate-500 font-medium flex-shrink-0">{msg.duration}</span>
+                      </div>
+                    )}
+
+                    {/* Texto da mensagem */}
+                    {msg.text && <p className={`text-sm whitespace-pre-wrap ${msg.isInternal ? 'text-amber-900' : 'text-slate-800'}`}>{msg.text}</p>}
+                    
+                    {/* Botões interativos */}
+                    {msg.buttons && (
+                      <div className="mt-2 flex flex-col gap-1 border-t border-slate-200/60 pt-2">
+                        {msg.buttons.map((btn, idx) => (
+                          <button key={idx} onClick={() => handleChatButtonClick(btn)} className="w-full text-center text-teal-600 text-sm font-medium py-1.5 bg-white border border-slate-100 rounded-lg hover:bg-teal-50 transition-colors shadow-sm">
+                            {btn}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="flex justify-end items-center gap-1 mt-1">
+                      <span className="text-[10px] text-slate-400">{msg.time}</span>
+                      {msg.sender === 'bot' && !msg.isInternal && (
+                         msg.status === 'sending' ? <Clock size={12} className="text-slate-400" /> : <CheckCheck size={14} className="text-teal-500" />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Botão Responder (Lado direito se enviada pelo cliente) */}
+                  {msg.sender === 'client' && (
+                    <button onClick={() => setReplyingTo(msg)} className="opacity-0 group-hover:opacity-100 p-2 bg-white/60 hover:bg-white rounded-full text-slate-400 hover:text-teal-600 transition-all shadow-sm">
+                      <CornerUpLeft size={16}/>
+                    </button>
+                  )}
+                </div>
+              ))}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Container Dinâmico Inferior (Bloqueio / Input) */}
+            <div className="bg-slate-50 border-t border-slate-200 z-10 relative flex-shrink-0 flex flex-col">
+              
+              {activeChatData?.status === 'Finalizado' ? (
+                <div className="h-16 flex items-center justify-center px-4">
+                  <div className="text-slate-500 text-sm font-medium flex items-center gap-2">
+                    <CheckCircle size={18} className="text-slate-400"/>
+                    Atendimento finalizado. O paciente não pode receber novas mensagens.
+                  </div>
+                </div>
+              ) : activeChatData?.is24hOpen === false ? (
+                <div className="h-16 flex items-center justify-center px-4">
+                  <div className="flex items-center gap-2 text-sm text-slate-500 mr-4 bg-orange-100/50 px-3 py-1.5 rounded-lg border border-orange-100">
+                    <Clock size={16} className="text-orange-500"/> 
+                    <span>Janela de 24h fechada</span>
+                  </div>
+                  <button onClick={() => setShowTemplateModal(true)} className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-medium shadow-sm flex items-center gap-2">
+                    <LayoutTemplate size={18} /> Enviar Template Oficial
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* LOTE 6: Bloco de Citação acima do Input */}
+                  {replyingTo && (
+                    <div className="bg-white border-l-4 border-teal-500 p-2 flex justify-between items-center mx-4 mt-3 rounded-lg shadow-sm border-t border-b border-r border-slate-200">
+                      <div className="flex flex-col min-w-0 flex-1">
+                        <span className="text-teal-700 text-xs font-bold">{replyingTo.sender === 'client' ? activeChatData.name : 'Você'}</span>
+                        <span className="text-slate-500 text-xs truncate">{replyingTo.text || (replyingTo.type === 'audio' ? 'Áudio' : replyingTo.type === 'image' ? 'Imagem' : 'Documento')}</span>
+                      </div>
+                      <button onClick={() => setReplyingTo(null)} className="text-slate-400 hover:text-slate-600 ml-2 p-1 rounded-full hover:bg-slate-100"><X size={16}/></button>
+                    </div>
+                  )}
+
+                  <div className={`h-16 flex items-center px-4 gap-3 transition-colors ${isInternalNote ? 'bg-amber-50' : 'bg-transparent'}`}>
+                    {showAttachments && (
+                      <div className="absolute bottom-20 left-4 bg-white border border-slate-200 rounded-2xl shadow-xl p-2 flex flex-col gap-2 z-50 animate-in fade-in slide-in-from-bottom-2">
+                        <button onClick={() => { showToast('Abrir seletor de arquivos'); setShowAttachments(false); }} className="flex items-center gap-3 px-4 py-2 hover:bg-slate-50 rounded-xl text-sm text-slate-700 transition-colors"><div className="bg-blue-100 p-2 rounded-full text-blue-600"><File size={18} /></div> Documento</button>
+                        <button onClick={() => { showToast('Abrir galeria'); setShowAttachments(false); }} className="flex items-center gap-3 px-4 py-2 hover:bg-slate-50 rounded-xl text-sm text-slate-700 transition-colors"><div className="bg-pink-100 p-2 rounded-full text-pink-600"><ImageIcon size={18} /></div> Imagem</button>
+                        <button onClick={() => { showToast('Ativar câmera'); setShowAttachments(false); }} className="flex items-center gap-3 px-4 py-2 hover:bg-slate-50 rounded-xl text-sm text-slate-700 transition-colors"><div className="bg-red-100 p-2 rounded-full text-red-600"><Camera size={18} /></div> Câmera</button>
+                      </div>
+                    )}
+                    <button onClick={() => { setShowAttachments(!showAttachments); setShowQuickReplies(false); }} className={`p-2 transition-colors rounded-full ${showAttachments ? 'bg-teal-100 text-teal-700' : 'text-slate-500 hover:text-teal-600 hover:bg-slate-200'}`}>
+                      <Paperclip size={20} />
+                    </button>
+                    <button onClick={() => setIsInternalNote(!isInternalNote)} className={`p-2 transition-colors rounded-full flex items-center gap-1 ${isInternalNote ? 'bg-amber-200 text-amber-800' : 'text-slate-500 hover:text-amber-600 hover:bg-slate-200'}`} title="Ativar Nota Interna (Sussurro)">
+                      {isInternalNote ? <Lock size={20} /> : <Unlock size={20} />}
+                    </button>
+
+                    <div className={`flex-1 bg-white border rounded-full flex items-center px-2 py-1 shadow-inner focus-within:ring-1 transition-all relative ${isInternalNote ? 'border-amber-300 focus-within:border-amber-400 focus-within:ring-amber-400' : 'border-slate-200 focus-within:border-teal-400 focus-within:ring-teal-400'}`}>
+                      {showQuickReplies && (
+                        <div className="absolute bottom-14 left-0 w-80 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-hidden z-50 animate-in fade-in slide-in-from-bottom-2">
+                          <div className="bg-slate-50 p-3 border-b border-slate-100 font-semibold text-xs text-slate-500 uppercase tracking-wider flex justify-between items-center">
+                            Respostas Rápidas <X size={14} className="cursor-pointer hover:text-slate-800" onClick={() => setShowQuickReplies(false)}/>
+                          </div>
+                          <div className="max-h-60 overflow-y-auto p-2 flex flex-col gap-1">
+                            {quickReplies.map((reply, index) => (
+                              <button key={index} onClick={() => { setMessageText(reply); setShowQuickReplies(false); }} className="text-left px-3 py-2 hover:bg-teal-50 rounded-lg text-sm text-slate-700 transition-colors truncate">
+                                {reply}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <button onClick={() => { setShowQuickReplies(!showQuickReplies); setShowAttachments(false); }} className={`p-2 transition-colors rounded-full ${showQuickReplies ? 'text-teal-600 bg-teal-50' : 'text-slate-400 hover:text-teal-600 hover:bg-slate-100'}`} title="Respostas Rápidas">
+                        <Zap size={18} />
+                      </button>
+                      <button onClick={() => showToast('Seletor de Emojis em desenvolvimento')} className={`p-2 transition-colors rounded-full text-slate-400 hover:text-teal-600 hover:bg-slate-100`} title="Emojis">
+                        <Smile size={18} />
+                      </button>
+                      <input type="text" placeholder={isInternalNote ? "Nota interna..." : "Mensagem..."} className="flex-1 bg-transparent border-none focus:outline-none text-sm px-2 py-2 w-full min-w-0" value={messageText} onChange={e => setMessageText(e.target.value)} onKeyDown={handleKeyDown} disabled={isSending} />
+                    </div>
+                    
+                    {!messageText.trim() ? (
+                      <button onClick={() => showToast('Gravação de áudio iniciada...')} className={`p-3 text-white rounded-full transition-colors shadow-sm flex items-center justify-center ${isInternalNote ? 'bg-amber-500 hover:bg-amber-600' : 'bg-teal-600 hover:bg-teal-700'}`}>
+                        <Mic size={18} />
+                      </button>
+                    ) : (
+                      <button onClick={handleSendMessage} className={`p-3 text-white rounded-full transition-colors shadow-sm flex items-center justify-center ${isInternalNote ? 'bg-amber-500 hover:bg-amber-600' : 'bg-teal-600 hover:bg-teal-700'} ${isSending ? 'opacity-50' : ''}`} disabled={isSending}>
+                        <Send size={18} className="ml-1" />
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* 4. PAINEL DE CONTEXTO */}
+          {activeChatData?.patient ? (
+            <div className="w-80 bg-white border-l border-slate-200 flex flex-col shadow-sm z-10 overflow-y-auto flex-shrink-0">
+              <div className="p-6 border-b border-slate-100 flex flex-col items-center text-center bg-slate-50">
+                <div className="w-20 h-20 bg-orange-100 rounded-full flex items-center justify-center text-orange-500 mb-3 shadow-inner"><User size={32} /></div>
+                <h2 className="font-bold text-lg text-slate-800">{activeChatData.patient.name}</h2>
+                <p className="text-sm text-slate-500">{activeChatData.patient.age}</p>
+                <div className="mt-4 flex gap-2 w-full">
+                   <button onClick={() => setShowPatientModal(true)} className="flex-1 bg-teal-50 text-teal-700 py-2 rounded-lg text-xs font-semibold border border-teal-100 hover:bg-teal-100 transition-colors">Prontuário</button>
+                </div>
+              </div>
+              <div className="p-6 flex flex-col gap-6">
+                <div>
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2"><Stethoscope size={14} /> Terapias</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {activeChatData.patient.therapies.map((t, i) => <span key={i} className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-xs font-medium">{t}</span>)}
+                  </div>
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2"><Clock size={14} /> Agenda</h3>
+                  <div className="bg-slate-50 border border-slate-200 p-3 rounded-lg">
+                    <p className="text-sm text-slate-800 font-medium mb-3">{activeChatData.patient.nextAppointment}</p>
+                    <button onClick={handleConfirmarPresenca} className="w-full bg-teal-600 hover:bg-teal-700 transition-colors text-white py-1.5 rounded text-xs font-medium flex items-center justify-center gap-1"><Check size={14} /> Confirmar Presença</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="w-80 bg-slate-50 border-l border-slate-200 flex items-center justify-center p-6 text-center z-10 flex-shrink-0">
+              <p className="text-slate-500 text-sm">Nenhum paciente vinculado no Afeto Clinic.</p>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="flex-1 flex items-center justify-center bg-slate-50"><p className="text-slate-400">Módulo em Desenvolvimento</p></div>
+      )}
+      
+      {/* 5. MODAL DE PRONTUÁRIO */}
+      {showPatientModal && activeChatData?.patient && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="p-4 bg-teal-700 flex justify-between items-center text-white">
+              <h2 className="font-bold flex items-center gap-2"><FileText size={20}/> Prontuário Resumido</h2>
+              <button onClick={() => setShowPatientModal(false)} className="hover:bg-teal-600 p-1 rounded-full transition-colors"><X size={24} /></button>
+            </div>
+            <div className="p-6 overflow-y-auto flex-1 flex flex-col gap-6">
+              <div className="flex items-center gap-4 border-b border-slate-100 pb-6">
+                <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center text-orange-500 text-2xl font-bold">{activeChatData.patient.name.charAt(0)}</div>
+                <div>
+                  <h3 className="text-xl font-bold text-slate-800">{activeChatData.patient.name}</h3>
+                  <p className="text-slate-500">{activeChatData.patient.age} • Responsável: {activeChatData.name.split(' ')[0]}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-6">
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Terapias Ativas</h4>
+                  <ul className="list-disc list-inside text-sm text-slate-700 space-y-1">{activeChatData.patient.therapies.map((t, i) => <li key={i}>{t}</li>)}</ul>
+                </div>
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Última Evolução</h4>
+                  <p className="text-sm text-slate-700 italic">"Paciente apresentou boa interação na sessão de fonoaudiologia hoje. Exercícios vocais realizados com sucesso."</p>
+                  <span className="text-[10px] text-slate-400 mt-2 block">- Dra. Camila (Ontem)</span>
+                </div>
+              </div>
+            </div>
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+              <button onClick={() => setShowPatientModal(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg text-sm font-medium transition-colors">Fechar</button>
+              <button onClick={() => { showToast('Redirecionando para o Prontuário Completo...'); setShowPatientModal(false); }} className="px-4 py-2 bg-teal-600 text-white rounded-lg text-sm font-medium hover:bg-teal-700 transition-colors">Abrir Prontuário Completo</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. MODAL DE TEMPLATES HSM */}
+      {showTemplateModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col">
+            <div className="p-4 bg-teal-700 flex justify-between items-center text-white">
+              <h2 className="font-bold flex items-center gap-2"><LayoutTemplate size={20}/> Enviar Template (HSM)</h2>
+              <button onClick={() => setShowTemplateModal(false)} className="hover:bg-teal-600 p-1 rounded-full transition-colors"><X size={24} /></button>
+            </div>
+            <div className="p-6 overflow-y-auto flex-col flex gap-4 max-h-[60vh]">
+              <p className="text-sm text-slate-500 mb-2">A janela de 24 horas fechou. Escolha uma mensagem pré-aprovada.</p>
+              <div onClick={() => { showToast('Template enviado!'); setShowTemplateModal(false); }} className="border border-slate-200 rounded-xl p-4 hover:border-teal-400 cursor-pointer transition-colors group">
+                <div className="flex justify-between items-start mb-2"><span className="text-xs font-bold bg-teal-100 text-teal-700 px-2 py-1 rounded">lembrete_agenda_01</span><span className="text-xs text-slate-400">Aprovado</span></div>
+                <p className="text-sm text-slate-700 bg-slate-50 p-3 rounded-lg border border-slate-100">Olá, {'{{1}}'}! O horário de {'{{2}}'} está confirmado para amanhã às {'{{3}}'}. Por favor, confirme.</p>
+              </div>
+            </div>
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+              <button onClick={() => setShowTemplateModal(false)} className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg text-sm font-medium transition-colors">Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
