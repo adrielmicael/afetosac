@@ -1,0 +1,40 @@
+{
+  "name": "afeto-sac",
+  "version": "1.0.0",
+  "description": "Sistema de SAC para Clínicas - Afeto SAC",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "build": "npm run build:client && npm run build:functions",
+    "build:client": "cd client && npm run build",
+    "build:functions": "cd server && npm install && npx prisma generate",
+    "start": "cd server && npm start",
+    "db:generate": "cd server && npx prisma generate",
+    "db:migrate": "cd server && npx prisma migrate dev",
+    "db:studio": "cd server && npx prisma studio",
+    "db:seed": "cd server && npx ts-node prisma/seed.ts",
+    "install:all": "npm install && cd server && npm install && cd ../client && npm install",
+    "postinstall": "cd server && npm install && npx prisma generate && cd .. && npx prisma generate --schema=server/prisma/schema.prisma"
+  },
+  "keywords": ["sac", "clinica", "whatsapp", "atendimento"],
+  "author": "Afeto",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "prisma": "5.22.0"
+  },
+  "dependencies": {
+    "@netlify/functions": "^2.4.0",
+    "@prisma/client": "5.22.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "serverless-http": "^3.2.0"
+  },
+  "optionalDependencies": {
+    "bullmq": "^4.0.0",
+    "ioredis": "^5.0.0"
+  }
+}
