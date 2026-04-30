@@ -1,0 +1,727 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-1.0.x", "rhel-openssl-3.0.x", "debian-openssl-1.1.x", "linux-musl"]
+  output        = "../../src/generated/prisma"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ==========================================
+// MULTI-TENANCY - ORGANIZATIONS
+// ==========================================
+
+model Organization {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique // URL-friendly name (ex: clinica-afeto)
+  domain      String?  @unique // Custom domain
+  logoUrl     String?
+  primaryColor String   @default("#0d9488")
+  plan        String   @default("FREE") // FREE, STARTER, PRO, ENTERPRISE
+  status      String   @default("ACTIVE") // ACTIVE, SUSPENDED, CANCELLED
+  settings    String?  // JSON com configurações específicas
+  
+  // WhatsApp Config (por organização)
+  whatsappApiUrl        String?
+  whatsappAccessToken   String?
+  whatsappPhoneNumberId String?
+  whatsappWebhookVerifyToken String?
+  
+  // Limites do plano
+  maxUsers      Int @default(3)
+  maxChats      Int @default(100)
+  maxStorageGB  Int @default(1)
+  
+  // Stripe Billing
+  stripeCustomerId     String?  @unique
+  stripeSubscriptionId String?  @unique
+  trialEndsAt          DateTime?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  members      OrganizationMember[]
+  patients     Patient[]
+  chats        Chat[]
+  therapies    Therapy[]
+  quickReplies QuickReply[]
+  templates    Template[]
+  tags         Tag[]
+  activities   Activity[]
+  slaConfigs   SLAConfig[]
+  chatbotFlows ChatbotFlow[]
+  lgpdRequests LGPDRequest[]
+  apiKeys      ApiKey[]
+  webhookEndpoints WebhookEndpoint[]
+  
+  @@index([slug])
+  @@index([status])
+  @@index([plan])
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  id             String   @id @default(uuid())
+  organizationId String
+  userId         String
+  role           String   @default("AGENT") // OWNER, ADMIN, AGENT, SUPERVISOR
+  isActive       Boolean  @default(true)
+  joinedAt       DateTime @default(now())
+  lastAccessAt   DateTime @default(now())
+  
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@index([role])
+  @@map("organization_members")
+}
+
+// ==========================================
+// USER (Global - pode estar em múltiplas orgs)
+// ==========================================
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String
+  password  String
+  avatar    String?
+  isActive  Boolean  @default(true)
+  lastLoginAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // 2FA
+  twoFactorEnabled     Boolean @default(false)
+  twoFactorSecret      String? // Base32 secret
+  twoFactorBackupCodes String? // JSON array
+  
+  // Relations
+  memberships  OrganizationMember[]
+  chats        Chat[]
+  messages     Message[]
+  accessLogs   DataAccessLog[]
+  devices      DeviceSession[]
+  loginHistory LoginHistory[]
+  
+  @@index([email])
+  @@index([isActive])
+  @@index([twoFactorEnabled])
+  @@map("users")
+}
+
+// ==========================================
+// PATIENT (Por organização)
+// ==========================================
+
+model Patient {
+  id             String    @id @default(uuid())
+  organizationId String
+  name           String
+  age            String?
+  phone          String    // Não é mais unique global
+  email          String?
+  responsible    String?
+  allergies      String?
+  observations   String?
+  isActive       Boolean   @default(true)
+  isAnonymized   Boolean   @default(false)
+  anonymizedAt   DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  therapies    Therapy[]
+  chats        Chat[]
+  appointments Appointment[]
+  records      MedicalRecord[]
+  consents     Consent[]
+  accessLogs   DataAccessLog[]
+  exportLogs   DataExportLog[]
+  deletionLog  DataDeletionLog?
+  lgpdRequests LGPDRequest[]
+  
+  @@unique([organizationId, phone]) // Phone é unique por organização
+  @@index([organizationId])
+  @@index([name])
+  @@index([isActive])
+  @@map("patients")
+}
+
+model Therapy {
+  id             String @id @default(uuid())
+  organizationId String
+  name           String // Não é mais unique global
+  description    String?
+  color          String @default("#0d9488")
+  isActive       Boolean @default(true)
+  createdAt      DateTime @default(now())
+  
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  patients     Patient[]
+  
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("therapies")
+}
+
+// ==========================================
+// CHAT (Por organização)
+// ==========================================
+
+model Chat {
+  id             String   @id @default(uuid())
+  organizationId String
+  phone          String
+  name           String
+  channel        String   @default("WHATSAPP")
+  status         String   @default("WAITING") // WAITING, IN_PROGRESS, CLOSED
+  agentId        String?
+  patientId      String?
+  slaConfigId    String?
+  is24hOpen        Boolean   @default(true)
+  windowExpires    DateTime?
+  unreadCount      Int       @default(0)
+  lastMessageAt    DateTime  @default(now())
+  firstResponseAt  DateTime? // quando agente respondeu pela primeira vez (KPI SLA)
+  closedAt         DateTime? // quando o atendimento foi encerrado (KPI throughput)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  
+  // Relations
+  organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  agent           User?            @relation(fields: [agentId], references: [id])
+  patient         Patient?         @relation(fields: [patientId], references: [id])
+  slaConfig       SLAConfig?       @relation(fields: [slaConfigId], references: [id])
+  messages        Message[]
+  tags            Tag[]
+  chatbotSessions ChatbotSession[]
+  
+  @@index([organizationId])
+  @@index([organizationId, phone])
+  @@index([organizationId, status])
+  @@index([organizationId, agentId])
+  @@index([organizationId, lastMessageAt])
+  @@map("chats")
+}
+
+model Message {
+  id          String   @id @default(uuid())
+  chatId      String
+  sender      String   @default("CLIENT") // CLIENT, AGENT, BOT, SYSTEM
+  senderId    String?
+  type        String   @default("TEXT")
+  content     String
+  mediaUrl    String?
+  fileName    String?
+  fileSize    String?
+  duration    String?
+  isInternal  Boolean  @default(false)
+  status      String   @default("SENDING") // SENDING, SENT, DELIVERED, READ, FAILED
+  replyToId   String?
+  templateId  String?
+  buttons     String?
+  whatsappMessageId String?   @unique // ID da mensagem na API Meta (idempotência)
+  deliveredAt       DateTime? // quando a Meta confirmou entrega (KPI delivery rate)
+  readAt            DateTime? // quando o destinatário leu (KPI read rate)
+  createdAt         DateTime  @default(now())
+  
+  // Relations
+  chat       Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  senderUser User?    @relation(fields: [senderId], references: [id])
+  replyTo    Message? @relation("ReplyTo", fields: [replyToId], references: [id])
+  replies    Message[] @relation("ReplyTo")
+  
+  @@index([chatId, createdAt])
+  @@index([templateId])
+  @@index([sender])
+  @@index([status])
+  @@map("messages")
+}
+
+model Tag {
+  id             String   @id @default(uuid())
+  organizationId String
+  label          String // Não é mais unique global
+  color          String   @default("#0d9488")
+  createdAt      DateTime @default(now())
+  
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  chats        Chat[]
+  
+  @@unique([organizationId, label])
+  @@index([organizationId])
+  @@map("tags")
+}
+
+// ==========================================
+// APPOINTMENTS & RECORDS
+// ==========================================
+
+model Appointment {
+  id          String   @id @default(uuid())
+  patientId   String
+  date        DateTime
+  therapy     String
+  status      String   @default("SCHEDULED")
+  notes       String?
+  createdBy   String?  // userId do agente/profissional que criou
+  updatedBy   String?  // userId da última atualização
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  
+  @@index([patientId])
+  @@index([date])
+  @@index([status])
+  @@index([createdBy])
+  @@map("appointments")
+}
+
+model MedicalRecord {
+  id           String   @id @default(uuid())
+  patientId    String
+  date         DateTime @default(now())
+  professional String
+  content      String
+  type         String   @default("evolution")
+  createdBy    String?  // userId do profissional que criou
+  updatedBy    String?  // userId da última atualização
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  // Relations
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  
+  @@index([patientId])
+  @@index([date])
+  @@index([createdBy])
+  @@map("medical_records")
+}
+
+// ==========================================
+// QUICK REPLIES & TEMPLATES
+// ==========================================
+
+model QuickReply {
+  id             String   @id @default(uuid())
+  organizationId String
+  title          String // Não é mais unique global
+  content        String
+  category       String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  @@unique([organizationId, title])
+  @@index([organizationId])
+  @@index([category])
+  @@map("quick_replies")
+}
+
+model Template {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String // Não é mais unique global
+  description    String?
+  content        String
+  variables      String?
+  category       String   @default("UTILITY")
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@index([category])
+  @@map("templates")
+}
+
+// ==========================================
+// ACTIVITY LOG
+// ==========================================
+
+model Activity {
+  id             String   @id @default(uuid())
+  organizationId String
+  userId         String
+  type           String
+  description    String
+  metadata       String?
+  createdAt      DateTime @default(now())
+  
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  @@index([organizationId])
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("activities")
+}
+
+// ==========================================
+// CHATBOT
+// ==========================================
+
+model ChatbotFlow {
+  id             String   @id @default(uuid())
+  organizationId String
+  name           String // Não é mais unique global
+  description    String?
+  triggers       String   // JSON array
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  steps        ChatbotStep[]
+  sessions     ChatbotSession[]
+  
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@index([isActive])
+  @@map("chatbot_flows")
+}
+
+model ChatbotStep {
+  id          String   @id @default(uuid())
+  flowId      String
+  order       Int
+  message     String
+  fieldName   String?
+  options     String?
+  
+  // Relations
+  flow     ChatbotFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  sessions ChatbotSession[]
+  
+  @@index([flowId])
+  @@index([order])
+  @@map("chatbot_steps")
+}
+
+model ChatbotSession {
+  id            String   @id @default(uuid())
+  chatId        String
+  flowId        String
+  currentStepId String?
+  status        String   @default("ACTIVE")
+  data          String?
+  createdAt     DateTime @default(now())
+  endedAt       DateTime?
+  
+  // Relations
+  chat        Chat        @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  flow        ChatbotFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  currentStep ChatbotStep? @relation(fields: [currentStepId], references: [id])
+  
+  @@index([chatId])
+  @@index([flowId])
+  @@index([status])
+  @@map("chatbot_sessions")
+}
+
+// ==========================================
+// SLA
+// ==========================================
+
+model SLAConfig {
+  id                   String   @id @default(uuid())
+  organizationId       String
+  name                 String // Não é mais unique global
+  priority             Int      @default(0)
+  firstResponseMinutes Int      @default(15)
+  resolutionMinutes    Int      @default(240)
+  warningThreshold     Int      @default(80)
+  isDefault            Boolean  @default(false)
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  chats        Chat[]
+  
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@index([isDefault])
+  @@map("sla_configs")
+}
+
+// ==========================================
+// LGPD/GDPR
+// ==========================================
+
+model Consent {
+  id             String    @id @default(uuid())
+  patientId      String
+  type           String
+  granted        Boolean   @default(true)
+  grantedAt      DateTime  @default(now())
+  revokedAt      DateTime?
+  ipAddress      String?
+  userAgent      String?
+  privacyVersion String
+  
+  // Relations
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  
+  @@index([patientId])
+  @@index([type])
+  @@index([granted])
+  @@map("consents")
+}
+
+model DataAccessLog {
+  id          String   @id @default(uuid())
+  userId      String
+  patientId   String?
+  resource    String
+  resourceId  String
+  action      String
+  ipAddress   String
+  userAgent   String
+  reason      String?
+  timestamp   DateTime @default(now())
+  
+  // Relations
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  patient Patient? @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([patientId])
+  @@index([timestamp])
+  @@map("data_access_logs")
+}
+
+model DataExportLog {
+  id         String   @id @default(uuid())
+  patientId  String
+  format     String
+  exportedBy String
+  exportedAt DateTime @default(now())
+  ipAddress  String
+  
+  // Relations
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  
+  @@index([patientId])
+  @@map("data_export_logs")
+}
+
+model DataDeletionLog {
+  id            String   @id @default(uuid())
+  patientId     String   @unique
+  originalName  String
+  originalPhone String
+  anonymizedAt  DateTime @default(now())
+  reason        String
+  requestedBy   String
+  ipAddress     String
+  certificateId String   @unique
+  
+  // Relations
+  patient Patient @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  
+  @@index([certificateId])
+  @@map("data_deletion_logs")
+}
+
+model LGPDRequest {
+  id             String    @id @default(uuid())
+  organizationId String
+  patientId      String?
+  type           String    // EXPORT, DELETION, CORRECTION, ACCESS, PORTABILITY, REVOCATION
+  status         String    @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED, REJECTED
+  protocol       String    @unique
+  notes          String?
+  requestedAt    DateTime  @default(now())
+  completedAt    DateTime?
+  respondedBy    String?   // userId do responsável
+  ipAddress      String    @default("unknown")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Relations
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  patient      Patient?     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([patientId])
+  @@index([status])
+  @@index([protocol])
+  @@index([requestedAt])
+  @@map("lgpd_requests")
+}
+
+// ==========================================
+// SETTINGS (Por organização)
+// ==========================================
+
+model Setting {
+  id             String   @id @default(uuid())
+  organizationId String
+  key            String
+  value          String
+  description    String?
+  updatedAt      DateTime @updatedAt
+  
+  @@unique([organizationId, key])
+  @@index([organizationId])
+  @@map("settings")
+}
+
+// ==========================================
+// SECURITY - DEVICE SESSIONS
+// ==========================================
+
+model DeviceSession {
+  id          String   @id @default(uuid())
+  userId      String
+  token       String   @unique // JWT token identifier
+  deviceName  String?  // Ex: "Chrome on Windows"
+  deviceType  String?  // desktop, mobile, tablet
+  ipAddress   String
+  userAgent   String
+  location    String?  // Geolocation
+  isValid     Boolean  @default(true)
+  lastUsedAt  DateTime @default(now())
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([token])
+  @@index([isValid])
+  @@index([expiresAt])
+  @@map("device_sessions")
+}
+
+model LoginHistory {
+  id          String   @id @default(uuid())
+  userId      String
+  organizationId String?
+  status      String   // SUCCESS, FAILED, 2FA_REQUIRED
+  ipAddress   String
+  userAgent   String
+  location    String?
+  failureReason String?
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId])
+  @@index([organizationId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("login_history")
+}
+
+// ==========================================
+// API KEYS (Integração Pública)
+// ==========================================
+
+model ApiKey {
+  id             String    @id @default(uuid())
+  organizationId String
+  name           String    // Nome amigável (ex: "Integração HIS")
+  keyHash        String    @unique // SHA-256 do token completo
+  keyPrefix      String    // Primeiros 16 chars para exibição (sk_live_xxxxxxxx)
+  permissions    String    // JSON array: ["read_chats","write_messages","read_patients"]
+  isActive       Boolean   @default(true)
+  lastUsedAt     DateTime?
+  expiresAt      DateTime?
+  createdBy      String    // userId
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([keyHash])
+  @@index([isActive])
+  @@map("api_keys")
+}
+
+// ==========================================
+// WEBHOOK ENDPOINTS (Saída para sistemas externos)
+// ==========================================
+
+model WebhookEndpoint {
+  id             String    @id @default(uuid())
+  organizationId String
+  url            String    // URL destino
+  secret         String    // Segredo HMAC-SHA256 para assinar payloads
+  events         String    // JSON array de eventos inscritos
+  description    String?
+  isActive       Boolean   @default(true)
+  failureCount   Int       @default(0)
+  lastDeliveryAt DateTime?
+  lastStatus     String?   // "200", "500", "timeout"
+  createdBy      String    // userId
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([isActive])
+  @@map("webhook_endpoints")
+}
+
+// ==========================================
+// CACHE (Alternativa ao Redis)
+// ==========================================
+
+model Cache {
+  key       String   @id
+  value     String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  
+  @@index([expiresAt])
+  @@map("cache")
+}
+
+// ==========================================
+// JOB QUEUE (Alternativa ao BullMQ)
+// ==========================================
+
+model JobQueue {
+  id            String   @id @default(uuid())
+  queue         String
+  payload       String   // JSON
+  status        String   @default("pending")
+  attempts      Int      @default(0)
+  maxAttempts   Int      @default(3)
+  createdAt     DateTime @default(now())
+  processedAt   DateTime?
+  
+  @@index([queue])
+  @@index([status])
+  @@index([createdAt])
+  @@map("job_queue")
+}

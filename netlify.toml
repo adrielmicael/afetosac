@@ -1,0 +1,44 @@
+[build]
+  # publish e functions são relativos à raiz do repositório (sem base)
+  publish = "client/dist"
+  command = "npm run build:client && cd server && npx prisma generate"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+  included_files = ["src/generated/prisma/**"]
+
+# Checklist de pre-go-live (bloqueia build se variáveis críticas ausentes)
+[build.processing]
+  skip_processing = false
+
+# API redirects - tudo vai para a função
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+
+# SPA fallback para o frontend
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[build.environment]
+  NODE_VERSION = "20"
+  NPM_FLAGS = "--legacy-peer-deps"
+
+# Headers de segurança
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-XSS-Protection = "1; mode=block"
+
+# Cache para assets
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

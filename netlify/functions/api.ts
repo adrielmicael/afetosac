@@ -1,6 +1,6 @@
 /**
  * Netlify Function - Main API
- * Adaptação do Express para Serverless
+ * Adaptacao do Express para Serverless
  */
 
 import { Handler } from '@netlify/functions';
@@ -8,7 +8,7 @@ import express from 'express';
 import cors from 'cors';
 import serverless from 'serverless-http';
 
-// Importar rotas
+// Rotas
 import authRoutes from '../../server/src/routes/auth';
 import chatRoutes from '../../server/src/routes/chats';
 import messageRoutes from '../../server/src/routes/messages';
@@ -28,31 +28,55 @@ import organizationRoutes from '../../server/src/routes/organizations';
 import twoFactorRoutes from '../../server/src/routes/twoFactor';
 import billingRoutes from '../../server/src/routes/billing';
 import kpiRoutes from '../../server/src/routes/kpis';
+import apiKeyRoutes from '../../server/src/routes/apiKeys';
+import webhookEndpointRoutes from '../../server/src/routes/webhookEndpoints';
 
-// Security middlewares
-import { globalLimiter } from '../../server/src/middleware/rateLimiter';
+// Middlewares de seguranca
+import { globalLimiter, authLimiter } from '../../server/src/middleware/rateLimiter';
 import { securityHeaders } from '../../server/src/middleware/security';
+import { correlationId } from '../../server/src/middleware/correlationId';
 
 const app = express();
 
-// Middlewares
+const allowedOrigins = [
+  ...(process.env.ALLOWED_ORIGINS?.split(',').map((origin) => origin.trim()) || []),
+  process.env.URL,
+  process.env.DEPLOY_PRIME_URL,
+  'http://localhost:5173',
+  'http://localhost:3000',
+].filter((origin): origin is string => Boolean(origin));
+
+app.use(correlationId);
 app.use(securityHeaders);
 app.use(globalLimiter);
-app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['*'],
-  credentials: true,
-}));
-app.use(express.json({
-  limit: '10mb',
-  verify: (req, _res, buf) => {
-    if (req.originalUrl.includes('/webhooks/whatsapp')) {
-      req.rawBody = buf.toString('utf8');
-    }
-  },
-}));
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+  })
+);
+
+app.use(
+  express.json({
+    limit: '10mb',
+    verify: (req, _res, buf) => {
+      if (req.originalUrl.includes('/webhooks/whatsapp')) {
+        req.rawBody = buf.toString('utf8');
+      }
+    },
+  })
+);
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Netlify passa o path completo incluindo o prefixo /api — remove antes de rotear
+// Netlify passa o path completo com o prefixo /api
 app.use((req, _res, next) => {
   if (req.url.startsWith('/api')) {
     req.url = req.url.slice(4) || '/';
@@ -60,12 +84,13 @@ app.use((req, _res, next) => {
   next();
 });
 
-// Health check (deve ser rápido)
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+app.use('/auth/login', authLimiter);
+
+app.get('/health', (_req, res) => {
+  res.json({
+    status: 'ok',
     timestamp: new Date().toISOString(),
-    env: 'netlify-functions'
+    env: 'netlify-functions',
   });
 });
 
@@ -89,9 +114,10 @@ app.use('/organizations', organizationRoutes);
 app.use('/2fa', twoFactorRoutes);
 app.use('/billing', billingRoutes);
 app.use('/kpis', kpiRoutes);
+app.use('/api-keys', apiKeyRoutes);
+app.use('/webhook-endpoints', webhookEndpointRoutes);
 
-// Error handler
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error('Error:', err);
   res.status(err.status || 500).json({
     success: false,
@@ -99,5 +125,4 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   });
 });
 
-// Export handler for Netlify
 export const handler: Handler = serverless(app);

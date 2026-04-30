@@ -15,8 +15,11 @@
     "db:migrate": "cd server && npx prisma migrate dev",
     "db:studio": "cd server && npx prisma studio",
     "db:seed": "cd server && npx ts-node prisma/seed.ts",
+    "smoke": "cd server && npm run smoke",
+    "precheck": "cd server && npm run precheck",
+    "onboarding": "cd server && npm run onboarding",
     "install:all": "npm install && cd server && npm install && cd ../client && npm install",
-    "postinstall": "cd server && npm install && npx prisma generate && cd .. && npx prisma generate --schema=server/prisma/schema.prisma"
+    "postinstall": "cd server && npm install && npx prisma generate"
   },
   "keywords": ["sac", "clinica", "whatsapp", "atendimento"],
   "author": "Afeto",
