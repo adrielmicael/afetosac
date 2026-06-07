@@ -54,6 +54,13 @@ export const platformDataApi = {
   organizations: (params?: { status?: string; plan?: string; search?: string; page?: number }) =>
     platform.get('/organizations', { params }),
   organization: (id: string) => platform.get(`/organizations/${id}`),
+  createOrganization: (data: {
+    name: string;
+    slug?: string;
+    userEmail: string;
+    userName: string;
+    userPassword?: string;
+  }) => platform.post('/organizations', data),
   setStatus: (id: string, status: string) =>
     platform.patch(`/organizations/${id}/status`, { status }),
   setPlan: (id: string, plan: string) => platform.patch(`/organizations/${id}/plan`, { plan }),

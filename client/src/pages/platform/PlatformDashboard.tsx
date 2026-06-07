@@ -10,9 +10,11 @@ import {
   PowerOff,
   CheckCircle2,
   AlertTriangle,
+  Plus,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { platformDataApi } from '../../services/platformApi';
+import NewClinicModal from './NewClinicModal';
 
 const PLANS = ['FREE', 'STARTER', 'PRO', 'ENTERPRISE'];
 
@@ -72,6 +74,7 @@ export default function PlatformDashboard() {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [showNew, setShowNew] = useState(false);
 
   const load = async (searchValue = search) => {
     setLoading(true);
@@ -126,10 +129,23 @@ export default function PlatformDashboard() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-bold text-slate-900">Visão geral</h1>
-        <p className="text-sm text-slate-500">Todas as clínicas da plataforma</p>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">Visão geral</h1>
+          <p className="text-sm text-slate-500">Todas as clínicas da plataforma</p>
+        </div>
+        <button
+          onClick={() => setShowNew(true)}
+          className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-indigo-500 to-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:from-indigo-600 hover:to-violet-700"
+        >
+          <Plus className="h-4 w-4" />
+          Nova clínica
+        </button>
       </div>
+
+      {showNew && (
+        <NewClinicModal onClose={() => setShowNew(false)} onCreated={() => load('')} />
+      )}
 
       {/* Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
