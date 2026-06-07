@@ -14,7 +14,7 @@ export default function PlatformLayout() {
       /* segue com logout local */
     } finally {
       logout();
-      navigate('/platform/login');
+      navigate('/login');
     }
   };
 

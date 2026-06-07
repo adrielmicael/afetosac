@@ -158,6 +158,10 @@ export interface AuthResponse {
   success: boolean;
   token: string;
   user: User;
+  // Login unificado: identifica se é conta de plataforma ou de clínica
+  scope?: 'tenant' | 'platform';
+  admin?: { id: string; email: string; name: string; role: string };
+  mustEnable2FA?: boolean;
   // Quando o usuário tem 2FA ativo, o login devolve um desafio em vez da sessão
   requires2FA?: boolean;
   challengeToken?: string;

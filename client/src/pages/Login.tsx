@@ -4,7 +4,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Eye, EyeOff, Heart, Loader2, Lock, Mail, MessageCircle, ShieldCheck, Users } from 'lucide-react';
 import { authApi } from '../services/api';
+import { platformAuthApi } from '../services/platformApi';
 import { useAuthStore } from '../store';
+import { usePlatformStore } from '../store/platform';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
 
@@ -18,6 +20,7 @@ type LoginForm = z.infer<typeof loginSchema>;
 export default function Login() {
   const navigate = useNavigate();
   const { setAuth } = useAuthStore();
+  const setPlatformAuth = usePlatformStore((s) => s.setAuth);
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
@@ -25,6 +28,7 @@ export default function Login() {
   const [challengeToken, setChallengeToken] = useState<string | null>(null);
   const [twoFactorCode, setTwoFactorCode] = useState('');
   const [useBackupCode, setUseBackupCode] = useState(false);
+  const [scope, setScope] = useState<'tenant' | 'platform'>('tenant');
 
   const {
     register,
@@ -34,24 +38,36 @@ export default function Login() {
     resolver: zodResolver(loginSchema),
   });
 
+  // Direciona para o destino certo conforme o tipo de conta
+  const goPlatform = (admin: any, token: string) => {
+    setPlatformAuth(admin, token);
+    toast.success('Bem-vindo ao Console SaaS');
+    navigate('/platform');
+  };
+  const goTenant = (user: any, token: string) => {
+    setAuth(user, token);
+    toast.success('Bem-vindo ao Afeto SAC!');
+    navigate('/');
+  };
+
   const onSubmit = async (data: LoginForm) => {
     setIsLoading(true);
     try {
-      const response = await authApi.login(data);
+      const { data: res } = await authApi.login(data);
 
-      // 2FA ativo: avança para a etapa do código em vez de autenticar
-      if (response.data.requires2FA && response.data.challengeToken) {
-        setChallengeToken(response.data.challengeToken);
-        toast('Informe o código de verificação do seu app autenticador', {
-          icon: '🔐',
-        });
+      // 2FA ativo: guarda o escopo e avança para a etapa do código
+      if (res.requires2FA && res.challengeToken) {
+        setScope(res.scope === 'platform' ? 'platform' : 'tenant');
+        setChallengeToken(res.challengeToken);
+        toast('Informe o código de verificação do seu app autenticador', { icon: '🔐' });
         return;
       }
 
-      const { user, token } = response.data;
-      setAuth(user, token);
-      toast.success('Bem-vindo ao Afeto SAC!');
-      navigate('/');
+      if (res.scope === 'platform' && res.admin) {
+        goPlatform(res.admin, res.token);
+      } else {
+        goTenant(res.user, res.token);
+      }
     } catch (error: any) {
       toast.error(error.response?.data?.error || 'Erro ao fazer login');
     } finally {
@@ -64,20 +80,21 @@ export default function Login() {
     if (!challengeToken) return;
     setIsLoading(true);
     try {
-      const response = await authApi.verify2FA({
+      const payload = {
         challengeToken,
-        ...(useBackupCode
-          ? { backupCode: twoFactorCode.trim() }
-          : { token: twoFactorCode.trim() }),
-      });
-      const { user, token } = response.data;
-      setAuth(user, token);
-      toast.success('Bem-vindo ao Afeto SAC!');
-      navigate('/');
+        ...(useBackupCode ? { backupCode: twoFactorCode.trim() } : { token: twoFactorCode.trim() }),
+      };
+
+      if (scope === 'platform') {
+        const { data } = await platformAuthApi.verify2FA(payload);
+        if (data.token && data.admin) goPlatform(data.admin, data.token);
+      } else {
+        const { data } = await authApi.verify2FA(payload);
+        goTenant(data.user, data.token);
+      }
     } catch (error: any) {
       const status = error.response?.status;
       if (status === 401) {
-        // Desafio expirou: volta para o início do login
         setChallengeToken(null);
         setTwoFactorCode('');
         toast.error('Sessão de verificação expirou. Faça login novamente.');

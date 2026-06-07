@@ -11,7 +11,6 @@ import TermsOfService from './pages/TermsOfService';
 import Layout from './components/Layout';
 import Team from './pages/Team';
 import Reports from './pages/Reports';
-import PlatformLogin from './pages/platform/PlatformLogin';
 import PlatformLayout from './pages/platform/PlatformLayout';
 import PlatformDashboard from './pages/platform/PlatformDashboard';
 
@@ -25,21 +24,26 @@ function App() {
       <Route path="/privacy" element={<PrivacyPolicy />} />
       <Route path="/terms" element={<TermsOfService />} />
 
-      {/* Console SaaS (super-admin de plataforma) */}
-      <Route
-        path="/platform/login"
-        element={platformAuth ? <Navigate to="/platform" /> : <PlatformLogin />}
-      />
+      {/* Console SaaS (super-admin de plataforma) — login é o mesmo /login */}
       <Route
         path="/platform"
-        element={platformAuth ? <PlatformLayout /> : <Navigate to="/platform/login" />}
+        element={platformAuth ? <PlatformLayout /> : <Navigate to="/login" />}
       >
         <Route index element={<PlatformDashboard />} />
       </Route>
-      
+
+      {/* Login unificado: redireciona conforme o tipo de conta */}
       <Route
         path="/login"
-        element={isAuthenticated ? <Navigate to="/" /> : <Login />}
+        element={
+          isAuthenticated ? (
+            <Navigate to="/" />
+          ) : platformAuth ? (
+            <Navigate to="/platform" />
+          ) : (
+            <Login />
+          )
+        }
       />
       <Route
         path="/"

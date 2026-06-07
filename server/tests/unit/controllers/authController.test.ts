@@ -68,6 +68,7 @@ describe('AuthController', () => {
       expect(res.cookie).toHaveBeenCalledWith('access_token', 'mock-token', expect.any(Object));
       expect(res.json).toHaveBeenCalledWith({
         success: true,
+        scope: 'tenant',
         token: 'mock-token',
         user: expect.objectContaining({
           id: '1',
@@ -106,6 +107,7 @@ describe('AuthController', () => {
         success: true,
         requires2FA: true,
         challengeToken: 'mock-token',
+        scope: 'tenant',
       });
     });
 

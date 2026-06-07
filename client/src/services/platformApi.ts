@@ -20,8 +20,8 @@ platform.interceptors.response.use(
     if (error.response?.status === 401) {
       localStorage.removeItem('platform-token');
       localStorage.removeItem('platform-admin');
-      if (!window.location.pathname.startsWith('/platform/login')) {
-        window.location.href = '/platform/login';
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login';
       }
     }
     return Promise.reject(error);

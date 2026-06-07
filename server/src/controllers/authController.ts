@@ -16,6 +16,8 @@ import {
   revokeSession,
   clearSessionCookie,
 } from '../services/sessionService';
+import { issuePlatformSession, signPlatformChallenge } from '../services/platformSessionService';
+import { recordPlatformAudit } from '../services/platformAudit';
 
 export const validateLogin = [
   body('email').isEmail().normalizeEmail(),
@@ -45,6 +47,53 @@ export const login = async (
     }
 
     const { email, password } = req.body;
+
+    // 🛡️ Login unificado: se o e-mail for de um operador de PLATAFORMA, resolve aqui.
+    // (identidade separada dos usuários de clínica; tokens/escopos continuam distintos)
+    const platformAdmin = await prisma.platformAdmin.findUnique({ where: { email } });
+    if (platformAdmin && platformAdmin.isActive) {
+      const validAdmin = await comparePassword(password, platformAdmin.password);
+      if (!validAdmin) {
+        await recordPlatformAudit(req, {
+          action: 'LOGIN_FAILED',
+          actorId: platformAdmin.id,
+          actorEmail: platformAdmin.email,
+          targetType: 'PLATFORM',
+        });
+        throw new AppError('Invalid credentials', 401);
+      }
+
+      if (platformAdmin.twoFactorEnabled) {
+        await recordPlatformAudit(req, {
+          action: 'LOGIN_2FA_REQUIRED',
+          actorId: platformAdmin.id,
+          actorEmail: platformAdmin.email,
+          targetType: 'PLATFORM',
+        });
+        return res.json({
+          success: true,
+          requires2FA: true,
+          challengeToken: signPlatformChallenge(platformAdmin.id),
+          scope: 'platform',
+        });
+      }
+
+      const session = await issuePlatformSession(req, res, platformAdmin);
+      await recordPlatformAudit(req, {
+        action: 'LOGIN',
+        targetType: 'PLATFORM',
+        actorId: platformAdmin.id,
+        actorEmail: platformAdmin.email,
+      });
+      logger.info(`Platform admin ${platformAdmin.email} logged in`);
+      return res.json({
+        success: true,
+        token: session.token,
+        admin: session.admin,
+        scope: 'platform',
+        mustEnable2FA: true,
+      });
+    }
 
     const user = await prisma.user.findUnique({ where: { email } });
 
@@ -77,6 +126,7 @@ export const login = async (
         success: true,
         requires2FA: true,
         challengeToken,
+        scope: 'tenant',
       });
     }
 
@@ -86,6 +136,7 @@ export const login = async (
 
     res.json({
       success: true,
+      scope: 'tenant',
       token: session.token,
       user: session.user,
     });
