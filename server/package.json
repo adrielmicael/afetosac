@@ -12,7 +12,6 @@
     "precheck": "tsx scripts/precheck.ts",
     "onboarding": "tsx scripts/onboarding-check.ts",
     "platform:admin": "tsx scripts/create-platform-admin.ts",
-    "clinic:config": "tsx scripts/clinic-config.ts",
     "clinic:sync": "tsx scripts/clinic-sync.ts",
     "lint": "eslint src --ext .ts",
     "test": "jest",

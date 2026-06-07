@@ -50,3 +50,6 @@ server/src/generated/
 
 # Netlify local state
 .netlify/
+
+# Claude Code local config (pode conter histórico de comandos com segredos)
+.claude/

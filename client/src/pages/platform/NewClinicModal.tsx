@@ -169,7 +169,7 @@ export default function NewClinicModal({ onClose, onCreated }: NewClinicModalPro
               <input
                 value={externalId}
                 onChange={(e) => setExternalId(e.target.value)}
-                placeholder="ex: afetoespacoterapeuti387"
+                placeholder="identificador da clínica no Afeto Clinic"
                 className={inputCls}
               />
               <p className="mt-1 text-[11px] text-slate-400">
