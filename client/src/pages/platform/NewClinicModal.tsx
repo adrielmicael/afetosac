@@ -19,6 +19,7 @@ const slugify = (s: string) =>
 export default function NewClinicModal({ onClose, onCreated }: NewClinicModalProps) {
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
+  const [externalId, setExternalId] = useState('');
   const [userName, setUserName] = useState('');
   const [userEmail, setUserEmail] = useState('');
   const [userPassword, setUserPassword] = useState('');
@@ -44,6 +45,7 @@ export default function NewClinicModal({ onClose, onCreated }: NewClinicModalPro
         userEmail,
         userName,
         userPassword: userPassword || undefined,
+        externalId: externalId.trim() || undefined,
       });
       setCreated({
         name: data.organization.name,
@@ -158,6 +160,21 @@ export default function NewClinicModal({ onClose, onCreated }: NewClinicModalPro
                   className="w-full bg-transparent px-2 py-2 text-sm focus:outline-none"
                 />
               </div>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600">
+                Tenant Afeto Clinic <span className="text-slate-400">— opcional</span>
+              </label>
+              <input
+                value={externalId}
+                onChange={(e) => setExternalId(e.target.value)}
+                placeholder="ex: afetoespacoterapeuti387"
+                className={inputCls}
+              />
+              <p className="mt-1 text-[11px] text-slate-400">
+                Vincula a clínica aos pacientes dela no Afeto Clinic (pode definir depois).
+              </p>
             </div>
 
             <div className="h-px bg-slate-100" />

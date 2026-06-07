@@ -60,6 +60,7 @@ export const platformDataApi = {
     userEmail: string;
     userName: string;
     userPassword?: string;
+    externalId?: string;
   }) => platform.post('/organizations', data),
   setStatus: (id: string, status: string) =>
     platform.patch(`/organizations/${id}/status`, { status }),

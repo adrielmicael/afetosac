@@ -1,65 +1,81 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
-import { decrypt } from '../utils/crypto';
 import { logger } from '../utils/logger';
 
 /**
- * Monta um cliente Supabase REST com as credenciais da organização (URL + key
- * decifrada). Retorna null se a integração de leitura não estiver configurada.
- * É assim que o sistema "acessa" o Supabase do Afeto Clinic em runtime, por
- * tenant, sem credenciais globais.
+ * Credenciais do Supabase do Afeto Clinic são GLOBAIS (nível desenvolvedor):
+ * um único banco compartilhado por todas as clínicas, separadas por tenant_id.
+ * A clínica nunca vê/define URL ou service_role — só informa o seu tenant.
  */
-export const getClinicSupabaseClient = async (
-  organizationId: string
-): Promise<SupabaseClient | null> => {
-  const org = await prisma.organization.findUnique({
-    where: { id: organizationId },
-    select: { afetoClinicSupabaseUrl: true, afetoClinicSupabaseKey: true },
-  });
+const clinicUrl = () =>
+  process.env.AFETO_CLINIC_SUPABASE_URL || process.env.CLINIC_SUPABASE_URL || '';
+const clinicKey = () =>
+  process.env.AFETO_CLINIC_SUPABASE_KEY || process.env.CLINIC_SUPABASE_KEY || '';
 
-  if (!org?.afetoClinicSupabaseUrl || !org.afetoClinicSupabaseKey) {
-    return null;
-  }
+/** Indica se o desenvolvedor configurou a integração na plataforma. */
+export const isClinicIntegrationAvailable = (): boolean =>
+  Boolean(clinicUrl() && clinicKey());
 
-  const key = decrypt(org.afetoClinicSupabaseKey);
-  if (!key) return null;
-
-  return createClient(org.afetoClinicSupabaseUrl, key, {
+/** Cliente Supabase REST com as credenciais GLOBAIS do Afeto Clinic. */
+export const getClinicSupabaseClient = (): SupabaseClient | null => {
+  const url = clinicUrl();
+  const key = clinicKey();
+  if (!url || !key) return null;
+  return createClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 };
 
+const TENANT_COLUMN = 'tenant_id';
+
+// Resolve o cliente global + o tenant (externalId) da organização.
+const resolveClientAndTenant = async (organizationId: string) => {
+  const supa = getClinicSupabaseClient();
+  if (!supa) {
+    throw new AppError(
+      'Integração Afeto Clinic não configurada na plataforma. Contate o suporte.',
+      400
+    );
+  }
+  const org = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: { externalId: true },
+  });
+  return { supa, externalId: org?.externalId || null };
+};
+
 /**
- * Testa a conexão lendo 1 linha da tabela informada (default 'patients').
- * Retorna as colunas detectadas — útil para mapear o schema do Clinic.
+ * Testa a conexão e conta os registros DO TENANT da clínica.
  */
 export const testClinicConnection = async (
   organizationId: string,
   table = 'patients'
 ): Promise<{ ok: boolean; columns: string[]; rowCount: number | null }> => {
-  const supa = await getClinicSupabaseClient(organizationId);
-  if (!supa) {
-    throw new AppError('Integração Supabase do Afeto Clinic não configurada', 400);
+  const { supa, externalId } = await resolveClientAndTenant(organizationId);
+
+  // Descobre colunas + se a tabela é multi-tenant
+  const probe = await supa.from(table).select('*').limit(1);
+  if (probe.error) {
+    throw new AppError(`Falha ao acessar o Afeto Clinic: ${probe.error.message}`, 502);
+  }
+  const columns = probe.data && probe.data[0] ? Object.keys(probe.data[0]) : [];
+  const hasTenant = columns.includes(TENANT_COLUMN);
+
+  if (hasTenant && !externalId) {
+    throw new AppError('Informe o tenant da clínica antes de testar.', 400);
   }
 
-  const { data, error, count } = await supa
-    .from(table)
-    .select('*', { count: 'exact' })
-    .limit(1);
-
+  let query = supa.from(table).select('*', { count: 'exact' });
+  if (hasTenant && externalId) query = query.eq(TENANT_COLUMN, externalId);
+  const { error, count } = await query.limit(1);
   if (error) {
-    throw new AppError(`Falha ao acessar o Supabase do Clinic: ${error.message}`, 502);
+    throw new AppError(`Falha ao acessar o Afeto Clinic: ${error.message}`, 502);
   }
 
-  return {
-    ok: true,
-    columns: data && data[0] ? Object.keys(data[0]) : [],
-    rowCount: count ?? null,
-  };
+  return { ok: true, columns, rowCount: count ?? null };
 };
 
-// Aceita variações comuns de nomes de coluna (pt/en) do Afeto Clinic
 const pick = (row: Record<string, any>, keys: string[]): string | null => {
   for (const k of keys) {
     if (row[k] !== undefined && row[k] !== null && row[k] !== '') return String(row[k]);
@@ -68,70 +84,43 @@ const pick = (row: Record<string, any>, keys: string[]): string | null => {
 };
 
 /**
- * Sincroniza pacientes do Supabase do Clinic para o SAC (upsert por org+phone).
- * Mapeamento tolerante a nomes pt/en; ajuste fino conforme o schema real.
- *
- * Esta função é SOMENTE LEITURA no Clinic: apenas faz SELECT. As escritas
- * ocorrem exclusivamente no banco do SAC (prisma.patient.upsert).
- *
- * @param opts.dryRun quando true, lê e conta mas NÃO grava nada no SAC.
+ * Sincroniza pacientes do tenant da clínica para o SAC.
+ * SOMENTE LEITURA no Clinic; escreve apenas no SAC (Contact + Patient).
  */
-// Colunas que o sync realmente usa (em ordem de preferência pt/en).
-// Só estas são lidas — dados sensíveis (cpf, senha, prontuário) nem trafegam.
-const SYNC_CANDIDATE_COLUMNS = [
-  'id', // identidade do paciente no Afeto Clinic
-  'phone', 'telefone', 'celular', 'whatsapp',
-  'name', 'nome', 'full_name',
-  'email', 'e_mail',
-  'responsible', 'responsavel', 'guardian',
-  'age', 'idade',
-];
-
-const TENANT_COLUMN = 'tenant_id';
-
 export const syncPatientsFromClinic = async (
   organizationId: string,
   table = 'patients',
   opts: { dryRun?: boolean } = {}
 ): Promise<{ total: number; eligible: number; upserted: number; contacts: number; skipped: number; dryRun: boolean; tenantFiltered: boolean }> => {
-  const supa = await getClinicSupabaseClient(organizationId);
-  if (!supa) {
-    throw new AppError('Integração Supabase do Afeto Clinic não configurada', 400);
-  }
-
+  const { supa, externalId } = await resolveClientAndTenant(organizationId);
   const dryRun = Boolean(opts.dryRun);
 
-  // externalId do SAC = tenant_id da clínica no Afeto Clinic (escopo do sync)
-  const org = await prisma.organization.findUnique({
-    where: { id: organizationId },
-    select: { externalId: true },
-  });
-
-  // Descobre as colunas reais (1 linha) para montar uma projeção MÍNIMA
+  // Descobre colunas reais p/ projeção mínima e detecção de tenant
   const probe = await supa.from(table).select('*').limit(1);
   if (probe.error) {
-    throw new AppError(`Falha ao acessar o Clinic: ${probe.error.message}`, 502);
+    throw new AppError(`Falha ao acessar o Afeto Clinic: ${probe.error.message}`, 502);
   }
   const available: string[] = probe.data && probe.data[0] ? Object.keys(probe.data[0]) : [];
-  const hasTenantColumn = available.includes(TENANT_COLUMN);
+  const hasTenant = available.includes(TENANT_COLUMN);
 
-  // 🔒 Segurança multi-tenant: tabela com tenant_id exige externalId definido,
-  // senão a service_role traria pacientes de TODAS as clínicas.
-  if (hasTenantColumn && !org?.externalId) {
+  if (hasTenant && !externalId) {
     throw new AppError(
-      'A tabela é multi-clínica (tenant_id), mas esta organização não tem o tenant do Afeto Clinic (externalId) configurado. ' +
-        'Defina o externalId antes de sincronizar para não misturar dados de outras clínicas.',
+      'A base é multi-clínica (tenant_id), mas o tenant desta clínica não está definido. ' +
+        'Informe o tenant do Afeto Clinic antes de sincronizar.',
       400
     );
   }
-  const tenantId = hasTenantColumn ? org!.externalId : null;
+  const tenantId = hasTenant ? externalId : null;
 
-  // Projeção mínima: só as colunas mapeadas que existem (evita trafegar cpf/senha)
-  const projection = SYNC_CANDIDATE_COLUMNS.filter((c) => available.includes(c));
+  // Lê só as colunas necessárias (cpf/senha/saúde nem trafegam)
+  const candidates = [
+    'id', 'phone', 'telefone', 'celular', 'whatsapp',
+    'name', 'nome', 'full_name', 'email', 'e_mail',
+    'responsible', 'responsavel', 'guardian', 'age', 'idade',
+  ];
+  const projection = candidates.filter((c) => available.includes(c));
   const selectCols = projection.length > 0 ? projection.join(',') : '*';
 
-  // PostgREST limita a 1000 linhas por requisição — paginamos para trazer TODOS
-  // os registros já existentes, não apenas a primeira página.
   const pageSize = 1000;
   let from = 0;
   let total = 0;
@@ -145,7 +134,7 @@ export const syncPatientsFromClinic = async (
     if (tenantId) query = query.eq(TENANT_COLUMN, tenantId);
     const { data, error } = await query.range(from, from + pageSize - 1);
     if (error) {
-      throw new AppError(`Falha ao ler pacientes do Clinic: ${error.message}`, 502);
+      throw new AppError(`Falha ao ler pacientes do Afeto Clinic: ${error.message}`, 502);
     }
 
     const rows = data || [];
@@ -153,23 +142,21 @@ export const syncPatientsFromClinic = async (
 
     for (const row of rows) {
       const phone = pick(row, ['phone', 'telefone', 'celular', 'whatsapp']);
-      const externalId = pick(row, ['id']);
-      // Sem telefone (conversa) ou sem id (identidade) não dá para sincronizar
-      if (!phone || !externalId) {
+      const externalPatientId = pick(row, ['id']);
+      if (!phone || !externalPatientId) {
         skipped += 1;
         continue;
       }
       eligible += 1;
       contactPhones.add(phone);
 
-      if (dryRun) continue; // simulação: não grava no SAC
+      if (dryRun) continue;
 
       const name = pick(row, ['name', 'nome', 'full_name']) || 'Sem nome';
       const email = pick(row, ['email', 'e_mail']);
       const responsible = pick(row, ['responsible', 'responsavel', 'guardian']);
       const age = pick(row, ['age', 'idade']);
 
-      // 1) Contato (dono do telefone) — agrupa pacientes que compartilham o número
       const contact = await prisma.contact.upsert({
         where: { organizationId_phone: { organizationId, phone } },
         update: { name: responsible || name },
@@ -177,16 +164,15 @@ export const syncPatientsFromClinic = async (
         select: { id: true },
       });
 
-      // 2) Paciente — identidade pelo id do Clinic (não pelo telefone)
       await prisma.patient.upsert({
-        where: { organizationId_externalId: { organizationId, externalId } },
+        where: { organizationId_externalId: { organizationId, externalId: externalPatientId } },
         update: { name, email, responsible, age, phone, contactId: contact.id, isActive: true },
-        create: { organizationId, externalId, name, phone, email, responsible, age, contactId: contact.id },
+        create: { organizationId, externalId: externalPatientId, name, phone, email, responsible, age, contactId: contact.id },
       });
       upserted += 1;
     }
 
-    if (rows.length < pageSize) break; // última página
+    if (rows.length < pageSize) break;
     from += pageSize;
   }
 

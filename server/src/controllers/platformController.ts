@@ -286,7 +286,7 @@ export const recomputeUsage = async (req: Request, res: Response, next: NextFunc
 
 export const createOrganizationByPlatform = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { name, slug, userEmail, userName, userPassword } = req.body;
+    const { name, slug, userEmail, userName, userPassword, externalId } = req.body;
     if (!name || !userEmail || !userName) {
       throw new AppError('name, userEmail e userName são obrigatórios', 400);
     }
@@ -302,6 +302,14 @@ export const createOrganizationByPlatform = async (req: Request, res: Response, 
       userName,
       userPassword: password,
     });
+
+    // Tenant do Afeto Clinic (opcional) já no onboarding — engatilha o acesso aos dados
+    if (externalId && String(externalId).trim()) {
+      await prisma.organization.update({
+        where: { id: organization.id },
+        data: { externalId: String(externalId).trim() },
+      });
+    }
 
     await recordPlatformAudit(req, {
       action: 'ORG_CREATE',

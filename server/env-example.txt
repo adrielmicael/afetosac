@@ -19,6 +19,10 @@ WHATSAPP_APP_SECRET=""
 # Afeto Clinic Integration
 AFETO_CLINIC_API_URL=""
 AFETO_CLINIC_API_KEY=""
+# Supabase do Afeto Clinic — GLOBAL (nível desenvolvedor). As clínicas NÃO veem
+# isto; cada clínica só informa o seu tenant. Uma base compartilhada por todas.
+AFETO_CLINIC_SUPABASE_URL=""
+AFETO_CLINIC_SUPABASE_KEY=""
 
 # File Upload
 UPLOAD_DIR="uploads"

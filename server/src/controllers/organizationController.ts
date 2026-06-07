@@ -1,14 +1,17 @@
 import { Request, Response, NextFunction } from 'express';
-import crypto from 'crypto';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
 import { slugify } from '../utils/slugify';
-import { encrypt, encryptIfNeeded, maskSecret } from '../utils/crypto';
+import { encryptIfNeeded, maskSecret } from '../utils/crypto';
 import { hashPassword, validatePasswordStrength } from '../utils/password';
 import { issueSession } from '../services/sessionService';
 import { assertCanAddUser } from '../services/planLimitService';
-import { testClinicConnection, syncPatientsFromClinic } from '../services/clinicSupabaseService';
+import {
+  testClinicConnection,
+  syncPatientsFromClinic,
+  isClinicIntegrationAvailable,
+} from '../services/clinicSupabaseService';
 
 /**
  * Núcleo de provisionamento de uma organização (usuário OWNER + org + SLA padrão).
@@ -336,7 +339,7 @@ export const updateWhatsAppConfig = async (
   }
 };
 
-// Obter config da integração Afeto Clinic (segredo mascarado)
+// Obter config da integração Afeto Clinic (a clínica só lida com o TENANT)
 export const getAfetoClinicConfig = async (
   req: Request,
   res: Response,
@@ -346,27 +349,18 @@ export const getAfetoClinicConfig = async (
     const organizationId = (req as any).tenant?.id;
     const org = await prisma.organization.findUnique({
       where: { id: organizationId },
-      select: {
-        externalId: true,
-        afetoClinicEnabled: true,
-        afetoClinicSecret: true,
-        afetoClinicSupabaseUrl: true,
-        afetoClinicSupabaseKey: true,
-      },
+      select: { externalId: true },
     });
     if (!org) throw new AppError('Organization not found', 404);
 
     res.json({
       success: true,
       afetoClinic: {
+        // tenant da clínica no Afeto Clinic (único dado que a clínica informa)
         externalId: org.externalId,
-        enabled: org.afetoClinicEnabled,
-        configured: Boolean(org.afetoClinicSecret),
-        secret: maskSecret(org.afetoClinicSecret),
-        // Leitura via Supabase REST por tenant
-        supabaseUrl: org.afetoClinicSupabaseUrl,
-        supabaseKey: maskSecret(org.afetoClinicSupabaseKey),
-        supabaseConfigured: Boolean(org.afetoClinicSupabaseUrl && org.afetoClinicSupabaseKey),
+        configured: Boolean(org.externalId),
+        // a plataforma (desenvolvedor) já configurou as credenciais globais?
+        available: isClinicIntegrationAvailable(),
       },
     });
   } catch (error) {
@@ -374,7 +368,9 @@ export const getAfetoClinicConfig = async (
   }
 };
 
-// Atualizar config da integração (externalId, habilitar, (re)gerar segredo)
+// Atualizar config da integração: apenas o TENANT (externalId).
+// URL e service_role do Supabase são GLOBAIS (env, nível desenvolvedor) — a
+// clínica nunca os vê nem informa.
 export const updateAfetoClinicConfig = async (
   req: Request,
   res: Response,
@@ -382,41 +378,19 @@ export const updateAfetoClinicConfig = async (
 ) => {
   try {
     const organizationId = (req as any).tenant?.id;
-    const { externalId, enabled, regenerateSecret, supabaseUrl, supabaseKey } = req.body;
+    const { externalId } = req.body;
 
-    const current = await prisma.organization.findUnique({
+    if (externalId === undefined) {
+      throw new AppError('Informe o tenant da clínica', 400);
+    }
+
+    await prisma.organization.update({
       where: { id: organizationId },
-      select: { afetoClinicSecret: true },
+      data: { externalId: externalId ? String(externalId).trim() : null },
     });
-    if (!current) throw new AppError('Organization not found', 404);
 
-    const data: Record<string, unknown> = {};
-    if (externalId !== undefined) data.externalId = externalId || null;
-    if (enabled !== undefined) data.afetoClinicEnabled = Boolean(enabled);
-    // Config de leitura via Supabase REST (a chave é cifrada em repouso)
-    if (supabaseUrl !== undefined) data.afetoClinicSupabaseUrl = supabaseUrl || null;
-    if (supabaseKey) data.afetoClinicSupabaseKey = encryptIfNeeded(supabaseKey);
-
-    // Gera um segredo novo se solicitado ou se ainda não existe
-    let plaintextSecret: string | null = null;
-    if (regenerateSecret || !current.afetoClinicSecret) {
-      plaintextSecret = `afc_${crypto.randomBytes(24).toString('base64url')}`;
-      data.afetoClinicSecret = encrypt(plaintextSecret);
-    }
-
-    if (Object.keys(data).length === 0) {
-      throw new AppError('Nenhum campo informado', 400);
-    }
-
-    await prisma.organization.update({ where: { id: organizationId }, data });
-    logger.info(`Afeto Clinic integration updated for org ${organizationId}`);
-
-    res.json({
-      success: true,
-      message: 'Integração Afeto Clinic atualizada',
-      // o segredo é retornado UMA ÚNICA VEZ quando (re)gerado
-      ...(plaintextSecret ? { secret: plaintextSecret } : {}),
-    });
+    logger.info(`Afeto Clinic tenant updated for org ${organizationId}`);
+    res.json({ success: true, message: 'Tenant atualizado' });
   } catch (error) {
     next(error);
   }

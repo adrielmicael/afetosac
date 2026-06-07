@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Database,
   Users,
+  AlertTriangle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { organizationsApi } from '../services/api';
@@ -18,12 +19,9 @@ export default function AfetoClinicSection() {
   const [testing, setTesting] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
-  const [enabled, setEnabled] = useState(false);
   const [externalId, setExternalId] = useState('');
-  const [supabaseUrl, setSupabaseUrl] = useState('');
-  const [supabaseKey, setSupabaseKey] = useState(''); // só preenche para alterar
-  const [supabaseConfigured, setSupabaseConfigured] = useState(false);
-  const [keyMask, setKeyMask] = useState<string | null>(null);
+  const [savedTenant, setSavedTenant] = useState('');
+  const [available, setAvailable] = useState(false);
 
   const [testResult, setTestResult] = useState<{ columns: string[]; rowCount: number | null } | null>(null);
   const [syncResult, setSyncResult] = useState<any>(null);
@@ -33,11 +31,9 @@ export default function AfetoClinicSection() {
     try {
       const { data } = await organizationsApi.getAfetoClinic();
       const c = data.afetoClinic;
-      setEnabled(Boolean(c.enabled));
       setExternalId(c.externalId || '');
-      setSupabaseUrl(c.supabaseUrl || '');
-      setSupabaseConfigured(Boolean(c.supabaseConfigured));
-      setKeyMask(c.supabaseKey || null);
+      setSavedTenant(c.externalId || '');
+      setAvailable(Boolean(c.available));
     } catch {
       toast.error('Erro ao carregar a integração');
     } finally {
@@ -52,15 +48,9 @@ export default function AfetoClinicSection() {
   const save = async () => {
     setSaving(true);
     try {
-      await organizationsApi.updateAfetoClinic({
-        enabled,
-        externalId: externalId.trim() || undefined,
-        supabaseUrl: supabaseUrl.trim() || undefined,
-        ...(supabaseKey.trim() ? { supabaseKey: supabaseKey.trim() } : {}),
-      });
-      toast.success('Integração salva');
-      setSupabaseKey('');
-      await load();
+      await organizationsApi.updateAfetoClinic({ externalId: externalId.trim() });
+      setSavedTenant(externalId.trim());
+      toast.success('Tenant salvo');
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Erro ao salvar');
     } finally {
@@ -74,7 +64,7 @@ export default function AfetoClinicSection() {
     try {
       const { data } = await organizationsApi.testClinicSupabase();
       setTestResult({ columns: data.columns, rowCount: data.rowCount });
-      toast.success('Conexão OK');
+      toast.success(`Conexão OK — ${data.rowCount ?? '?'} paciente(s) encontrados`);
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Falha na conexão');
     } finally {
@@ -108,6 +98,8 @@ export default function AfetoClinicSection() {
     );
   }
 
+  const connected = Boolean(savedTenant) && available;
+
   return (
     <section className="space-y-4 rounded-2xl border border-rose-100 bg-gradient-to-br from-rose-50/60 to-white p-5">
       <div className="flex items-start justify-between gap-3">
@@ -118,90 +110,68 @@ export default function AfetoClinicSection() {
           <div>
             <h3 className="font-semibold text-slate-800">Afeto Clinic</h3>
             <p className="text-xs text-slate-500">
-              Conecte esta clínica ao Afeto Clinic e importe os pacientes.
+              Importe os pacientes desta clínica que já estão cadastrados no Afeto Clinic.
             </p>
           </div>
         </div>
         <span
           className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${
-            enabled && supabaseConfigured ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
+            connected ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
           }`}
         >
-          {enabled && supabaseConfigured ? <PlugZap className="h-3.5 w-3.5" /> : <Plug className="h-3.5 w-3.5" />}
-          {enabled && supabaseConfigured ? 'Conectado' : 'Não configurado'}
+          {connected ? <PlugZap className="h-3.5 w-3.5" /> : <Plug className="h-3.5 w-3.5" />}
+          {connected ? 'Conectado' : 'Não configurado'}
         </span>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="sm:col-span-2">
-          <label className="mb-1 block text-xs font-medium text-slate-600">
-            Tenant no Afeto Clinic <span className="text-slate-400">(identifica a clínica)</span>
-          </label>
+      {!available && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            A integração ainda não foi habilitada pela plataforma. Defina o seu tenant e contate o suporte para liberar o acesso.
+          </span>
+        </div>
+      )}
+
+      <div>
+        <label className="mb-1 block text-xs font-medium text-slate-600">
+          Identificador da clínica no Afeto Clinic (tenant)
+        </label>
+        <div className="flex gap-2">
           <input
             value={externalId}
             onChange={(e) => setExternalId(e.target.value)}
             placeholder="ex: afetoespacoterapeuti387"
             className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
           />
+          <button
+            onClick={save}
+            disabled={saving || externalId.trim() === savedTenant}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-50"
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+            Salvar
+          </button>
         </div>
-
-        <div className="sm:col-span-2">
-          <label className="mb-1 block text-xs font-medium text-slate-600">URL do Supabase do Clinic</label>
-          <input
-            value={supabaseUrl}
-            onChange={(e) => setSupabaseUrl(e.target.value)}
-            placeholder="https://xxxx.supabase.co"
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
-          />
-        </div>
-
-        <div className="sm:col-span-2">
-          <label className="mb-1 block text-xs font-medium text-slate-600">
-            Chave do Supabase (service_role){' '}
-            {supabaseConfigured && <span className="text-slate-400">— atual: {keyMask}</span>}
-          </label>
-          <input
-            type="password"
-            value={supabaseKey}
-            onChange={(e) => setSupabaseKey(e.target.value)}
-            placeholder={supabaseConfigured ? 'deixe em branco para manter' : 'cole a service_role key'}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
-          />
-          <p className="mt-1 text-[11px] text-slate-400">Armazenada cifrada (AES-256-GCM). Nunca é exibida em texto.</p>
-        </div>
-
-        <label className="flex cursor-pointer items-center gap-2 sm:col-span-2">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(e) => setEnabled(e.target.checked)}
-            className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
-          />
-          <span className="text-sm text-slate-700">Integração ativa</span>
-        </label>
+        <p className="mt-1 text-[11px] text-slate-400">
+          É só este código. As credenciais de acesso ao banco são gerenciadas pela plataforma — você não precisa delas.
+        </p>
       </div>
 
+      {/* Ações de importação */}
       <div className="flex flex-wrap gap-2 border-t border-rose-100 pt-4">
         <button
-          onClick={save}
-          disabled={saving}
-          className="flex items-center gap-1.5 rounded-lg bg-teal-600 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
-        >
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-          Salvar
-        </button>
-        <button
           onClick={test}
-          disabled={testing || !supabaseConfigured}
-          title={!supabaseConfigured ? 'Salve a URL e a chave primeiro' : ''}
+          disabled={testing || !connected}
+          title={!connected ? 'Salve o tenant e aguarde a liberação da plataforma' : ''}
           className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
         >
           {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
-          Testar conexão
+          Testar
         </button>
         <button
           onClick={() => sync(true)}
-          disabled={syncing || !supabaseConfigured}
+          disabled={syncing || !connected}
           className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
         >
           {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
@@ -209,7 +179,7 @@ export default function AfetoClinicSection() {
         </button>
         <button
           onClick={() => sync(false)}
-          disabled={syncing || !supabaseConfigured}
+          disabled={syncing || !connected}
           className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
         >
           {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
@@ -217,20 +187,12 @@ export default function AfetoClinicSection() {
         </button>
       </div>
 
-      {/* Resultado do teste */}
       {testResult && (
-        <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs">
-          <p className="font-semibold text-slate-700">
-            Conexão OK · {testResult.rowCount ?? '?'} registro(s) na origem
-          </p>
-          <p className="mt-1 text-slate-500">
-            Colunas detectadas: {testResult.columns.slice(0, 12).join(', ')}
-            {testResult.columns.length > 12 ? '…' : ''}
-          </p>
+        <div className="rounded-lg border border-slate-200 bg-white p-3 text-xs text-slate-600">
+          ✅ Conexão OK · {testResult.rowCount ?? '?'} paciente(s) na origem para este tenant.
         </div>
       )}
 
-      {/* Resultado do sync */}
       {syncResult && (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800">
           {syncResult.dryRun ? '🧪 Simulação' : '✅ Importação'}: lidos {syncResult.total} ·{' '}

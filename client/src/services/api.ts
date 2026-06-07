@@ -66,13 +66,9 @@ export const organizationsApi = {
     appSecret?: string;
   }) => api.put('/organizations/whatsapp', data),
   getAfetoClinic: () => api.get<{ success: boolean; afetoClinic: any }>('/organizations/afeto-clinic'),
-  updateAfetoClinic: (data: {
-    externalId?: string;
-    enabled?: boolean;
-    supabaseUrl?: string;
-    supabaseKey?: string;
-    regenerateSecret?: boolean;
-  }) => api.put('/organizations/afeto-clinic', data),
+  // A clínica só define o seu tenant; URL/service_role são globais (desenvolvedor)
+  updateAfetoClinic: (data: { externalId?: string }) =>
+    api.put('/organizations/afeto-clinic', data),
   testClinicSupabase: (table?: string) =>
     api.get<{ success: boolean; ok: boolean; columns: string[]; rowCount: number | null }>(
       '/organizations/afeto-clinic/supabase/test',
