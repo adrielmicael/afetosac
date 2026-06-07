@@ -40,8 +40,10 @@ spec:
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
+          # /health/ready valida dependências (DB obrigatório, Redis se configurado)
           httpGet:
-            path: /health
+            path: /health/ready
             port: 3001
           initialDelaySeconds: 5
           periodSeconds: 5
+          failureThreshold: 3

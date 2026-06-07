@@ -5,6 +5,8 @@ import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
 import { cache } from '../config/redis';
+import { comparePassword } from '../utils/password';
+import { issueSession, verifyChallengeToken } from '../services/sessionService';
 
 /**
  * Gerar secret para 2FA
@@ -121,8 +123,7 @@ export const disable2FA = async (
       throw new AppError('User not found', 404);
     }
 
-    const bcrypt = require('bcryptjs');
-    const valid = await bcrypt.compare(password, user.password);
+    const valid = await comparePassword(password, user.password);
     if (!valid) {
       throw new AppError('Invalid password', 400);
     }
@@ -157,17 +158,29 @@ export const verify2FALogin = async (
   next: NextFunction
 ) => {
   try {
-    const { userId, token, backupCode } = req.body;
+    const { challengeToken, token, backupCode } = req.body;
+
+    if (!challengeToken) {
+      throw new AppError('Challenge token required', 400);
+    }
+
+    // Valida o desafio emitido na 1ª etapa do login (curta duração)
+    let userId: string;
+    try {
+      ({ id: userId } = verifyChallengeToken(challengeToken));
+    } catch {
+      throw new AppError('Challenge expired or invalid, please login again', 401);
+    }
 
     const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user || !user.twoFactorEnabled) {
+    if (!user || !user.isActive || !user.twoFactorEnabled) {
       throw new AppError('2FA not enabled for this user', 400);
     }
 
     // Verificar se é backup code
     if (backupCode) {
       const backupCodes = JSON.parse(user.twoFactorBackupCodes || '[]');
-      const index = backupCodes.indexOf(backupCode.toUpperCase());
+      const index = backupCodes.indexOf(String(backupCode).toUpperCase());
 
       if (index === -1) {
         throw new AppError('Invalid backup code', 400);
@@ -195,22 +208,29 @@ export const verify2FALogin = async (
       }
     }
 
-    // Gerar JWT completo
-    const jwt = require('jsonwebtoken');
-    const accessToken = jwt.sign(
-      { userId: user.id, email: user.email },
-      process.env.JWT_SECRET!,
-      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
-    );
+    const membership = await prisma.organizationMember.findFirst({
+      where: {
+        userId: user.id,
+        isActive: true,
+        organization: { status: 'ACTIVE' },
+      },
+      orderBy: { joinedAt: 'asc' },
+      select: { role: true, organizationId: true },
+    });
+
+    if (!membership) {
+      throw new AppError('No active organization membership found', 403);
+    }
+
+    // Emite a sessão completa (jti + DeviceSession + LoginHistory + cookie)
+    const session = await issueSession(req, res, user, membership);
+
+    logger.info(`User ${user.email} completed 2FA login`);
 
     res.json({
       success: true,
-      token: accessToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-      },
+      token: session.token,
+      user: session.user,
     });
   } catch (error) {
     next(error);

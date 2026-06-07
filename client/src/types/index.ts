@@ -34,6 +34,13 @@ export interface Therapy {
   color: string;
 }
 
+export interface Contact {
+  id: string;
+  name?: string;
+  phone: string;
+  patients: Patient[];
+}
+
 export interface Chat {
   id: string;
   phone: string;
@@ -41,12 +48,14 @@ export interface Chat {
   channel: 'WHATSAPP' | 'INSTAGRAM' | 'FACEBOOK' | 'TELEGRAM';
   status: 'WAITING' | 'IN_PROGRESS' | 'CLOSED';
   agentId?: string;
+  contactId?: string;
   patientId?: string;
   agent?: {
     id: string;
     name: string;
     avatar?: string;
   };
+  contact?: Contact;
   patient?: Patient;
   is24hOpen: boolean;
   windowExpires?: string;
@@ -149,4 +158,18 @@ export interface AuthResponse {
   success: boolean;
   token: string;
   user: User;
+  // Quando o usuário tem 2FA ativo, o login devolve um desafio em vez da sessão
+  requires2FA?: boolean;
+  challengeToken?: string;
+}
+
+export interface DeviceSession {
+  id: string;
+  deviceName: string | null;
+  deviceType: string | null;
+  ipAddress: string;
+  location: string | null;
+  lastUsedAt: string;
+  createdAt: string;
+  current: boolean;
 }

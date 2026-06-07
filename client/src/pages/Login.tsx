@@ -21,31 +21,69 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
+  // Etapa de 2FA
+  const [challengeToken, setChallengeToken] = useState<string | null>(null);
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [useBackupCode, setUseBackupCode] = useState(false);
+
   const {
     register,
     handleSubmit,
-    setValue,
     formState: { errors },
   } = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
   });
 
-  const fillDemoCredentials = () => {
-    setValue('email', 'admin@afeto.com');
-    setValue('password', 'admin123');
-    toast.success('Credenciais de demonstração preenchidas');
-  };
-
   const onSubmit = async (data: LoginForm) => {
     setIsLoading(true);
     try {
       const response = await authApi.login(data);
+
+      // 2FA ativo: avança para a etapa do código em vez de autenticar
+      if (response.data.requires2FA && response.data.challengeToken) {
+        setChallengeToken(response.data.challengeToken);
+        toast('Informe o código de verificação do seu app autenticador', {
+          icon: '🔐',
+        });
+        return;
+      }
+
       const { user, token } = response.data;
       setAuth(user, token);
       toast.success('Bem-vindo ao Afeto SAC!');
       navigate('/');
     } catch (error: any) {
       toast.error(error.response?.data?.error || 'Erro ao fazer login');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const onVerify2FA = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!challengeToken) return;
+    setIsLoading(true);
+    try {
+      const response = await authApi.verify2FA({
+        challengeToken,
+        ...(useBackupCode
+          ? { backupCode: twoFactorCode.trim() }
+          : { token: twoFactorCode.trim() }),
+      });
+      const { user, token } = response.data;
+      setAuth(user, token);
+      toast.success('Bem-vindo ao Afeto SAC!');
+      navigate('/');
+    } catch (error: any) {
+      const status = error.response?.status;
+      if (status === 401) {
+        // Desafio expirou: volta para o início do login
+        setChallengeToken(null);
+        setTwoFactorCode('');
+        toast.error('Sessão de verificação expirou. Faça login novamente.');
+      } else {
+        toast.error(error.response?.data?.error || 'Código inválido');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -72,11 +110,82 @@ export default function Login() {
 
         {/* Cabeçalho */}
         <div className="mb-7">
-          <h1 className="text-2xl font-bold text-slate-900">Faça login na sua conta</h1>
-          <p className="mt-1 text-sm text-slate-500">Acesse o painel de atendimento</p>
+          <h1 className="text-2xl font-bold text-slate-900">
+            {challengeToken ? 'Verificação em duas etapas' : 'Faça login na sua conta'}
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            {challengeToken
+              ? 'Digite o código do seu aplicativo autenticador'
+              : 'Acesse o painel de atendimento'}
+          </p>
         </div>
 
+        {/* Etapa 2FA */}
+        {challengeToken && (
+          <form onSubmit={onVerify2FA} className="space-y-5">
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">
+                {useBackupCode ? 'Código de backup' : 'Código de verificação'}
+              </label>
+              <div className="relative">
+                <ShieldCheck className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  inputMode={useBackupCode ? 'text' : 'numeric'}
+                  autoComplete="one-time-code"
+                  autoFocus
+                  value={twoFactorCode}
+                  onChange={(e) => setTwoFactorCode(e.target.value)}
+                  className="w-full rounded-lg border border-slate-300 py-2.5 pl-10 pr-4 text-sm tracking-widest text-slate-900 transition focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 placeholder:text-slate-400"
+                  placeholder={useBackupCode ? 'XXXXXXXX' : '000000'}
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={isLoading || !twoFactorCode.trim()}
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-400/20 transition hover:from-emerald-700 hover:to-teal-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Verificando...
+                </>
+              ) : (
+                'VERIFICAR'
+              )}
+            </button>
+
+            <div className="flex items-center justify-between text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setUseBackupCode((v) => !v);
+                  setTwoFactorCode('');
+                }}
+                className="font-medium text-teal-600 hover:text-teal-700"
+              >
+                {useBackupCode ? 'Usar código do app' : 'Usar código de backup'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setChallengeToken(null);
+                  setTwoFactorCode('');
+                  setUseBackupCode(false);
+                }}
+                className="font-medium text-slate-500 hover:text-slate-700"
+              >
+                Voltar
+              </button>
+            </div>
+          </form>
+        )}
+
         {/* Formulário */}
+        {!challengeToken && (
+        <>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
           <div>
             <label className="mb-1.5 block text-sm font-medium text-slate-700">E-mail</label>
@@ -140,25 +249,8 @@ export default function Login() {
             )}
           </button>
         </form>
-
-        {/* Demo */}
-        <div className="mt-6 rounded-xl border border-emerald-100 bg-gradient-to-r from-emerald-50 to-cyan-50 p-4">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Demonstração
-            </p>
-            <button
-              type="button"
-              onClick={fillDemoCredentials}
-              className="rounded-md border border-teal-200 bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-700 transition hover:bg-teal-100"
-            >
-              Preencher
-            </button>
-          </div>
-          <p className="mt-1.5 text-xs text-slate-500">
-            admin@afeto.com &nbsp;/&nbsp; admin123
-          </p>
-        </div>
+        </>
+        )}
         </div>
       </div>
 

@@ -227,7 +227,7 @@ export const anonymizePatient = async (
       data: {
         patientId,
         originalName: patient.name,
-        originalPhone: patient.phone,
+        originalPhone: patient.phone || 'unknown',
         anonymizedAt: new Date(),
         reason: reason || 'Patient request',
         requestedBy: req.user?.id || 'system',

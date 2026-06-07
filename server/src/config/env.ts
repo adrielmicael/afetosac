@@ -14,11 +14,9 @@ export const getJwtSecret = (): string => {
 
 export const validateEnvironment = (): void => {
   const commonRequired = ['DATABASE_URL', 'JWT_SECRET'];
-  const productionRequired = [
-    'WHATSAPP_APP_SECRET',
-    'WHATSAPP_ACCESS_TOKEN',
-    'WHATSAPP_PHONE_NUMBER_ID',
-  ];
+  // Multi-tenant: as credenciais WhatsApp são por organização (no banco, cifradas).
+  // O que precisa ser global em produção é a chave do cofre de criptografia.
+  const productionRequired = ['ENCRYPTION_KEY'];
 
   const required = process.env.NODE_ENV === 'production'
     ? [...commonRequired, ...productionRequired]
@@ -27,6 +25,10 @@ export const validateEnvironment = (): void => {
   const missing = getMissingEnv(required);
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+  }
+
+  if (process.env.NODE_ENV !== 'production' && !process.env.ENCRYPTION_KEY) {
+    logger.warn('ENCRYPTION_KEY não configurada — operações de cifra de segredos falharão até configurá-la.');
   }
 
   logger.info(`Environment validated (${process.env.NODE_ENV || 'development'})`);

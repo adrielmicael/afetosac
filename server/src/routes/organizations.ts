@@ -10,6 +10,12 @@ import {
   listMembers,
   removeMember,
   updateMemberRole,
+  getWhatsAppConfig,
+  updateWhatsAppConfig,
+  getAfetoClinicConfig,
+  updateAfetoClinicConfig,
+  testAfetoClinicSupabase,
+  syncAfetoClinicPatients,
 } from '../controllers/organizationController';
 
 const router = Router();
@@ -27,6 +33,17 @@ router.use(extractTenant);
 
 router.get('/current', getCurrentOrganization);
 router.put('/current', requireRole('OWNER', 'ADMIN'), updateOrganization);
+
+// Configuração WhatsApp (segredos cifrados em repouso)
+router.get('/whatsapp', requireRole('OWNER', 'ADMIN'), getWhatsAppConfig);
+router.put('/whatsapp', requireRole('OWNER', 'ADMIN'), updateWhatsAppConfig);
+
+// Integração Afeto Clinic (SSO/provisionamento)
+router.get('/afeto-clinic', requireRole('OWNER', 'ADMIN'), getAfetoClinicConfig);
+router.put('/afeto-clinic', requireRole('OWNER', 'ADMIN'), updateAfetoClinicConfig);
+// Leitura/sync via Supabase REST do Afeto Clinic
+router.get('/afeto-clinic/supabase/test', requireRole('OWNER', 'ADMIN'), testAfetoClinicSupabase);
+router.post('/afeto-clinic/supabase/sync-patients', requireRole('OWNER', 'ADMIN'), syncAfetoClinicPatients);
 
 // Membros
 router.get('/members', listMembers);

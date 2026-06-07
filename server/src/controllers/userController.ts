@@ -1,8 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
-import bcrypt from 'bcryptjs';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
+import { hashPassword } from '../utils/password';
+import { assertCanAddUser } from '../services/planLimitService';
 
 const getOrganizationId = (req: Request): string => {
   const organizationId = req.user?.organizationId;
@@ -131,7 +132,10 @@ export const createUser = async (
       throw new AppError('Email already registered', 400);
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // Enforcement de plano: respeita o limite de usuários
+    await assertCanAddUser(organizationId);
+
+    const hashedPassword = await hashPassword(password);
 
     const user = await prisma.user.create({
       data: {
@@ -285,7 +289,21 @@ export const inviteUser = async (
 
     // Senha temporária aleatória
     const tempPassword = Math.random().toString(36).slice(-10) + 'A1!';
-    const hashedPassword = await bcrypt.hash(tempPassword, 10);
+    const hashedPassword = await hashPassword(tempPassword);
+
+    // Verifica se já é membro
+    const existingMember = user
+      ? await prisma.organizationMember.findFirst({
+          where: { organizationId, userId: user.id },
+        })
+      : null;
+
+    if (existingMember?.isActive) {
+      throw new AppError('User is already a member of this organization', 400);
+    }
+
+    // Enforcement de plano: novo membro ativo conta para o limite
+    await assertCanAddUser(organizationId);
 
     if (!user) {
       user = await prisma.user.create({
@@ -293,15 +311,7 @@ export const inviteUser = async (
       });
     }
 
-    // Verifica se já é membro
-    const existingMember = await prisma.organizationMember.findFirst({
-      where: { organizationId, userId: user.id },
-    });
-
     if (existingMember) {
-      if (existingMember.isActive) {
-        throw new AppError('User is already a member of this organization', 400);
-      }
       await prisma.organizationMember.update({
         where: { id: existingMember.id },
         data: { isActive: true, role: role || 'AGENT' },

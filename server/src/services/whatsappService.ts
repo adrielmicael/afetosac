@@ -1,6 +1,21 @@
 import axios, { AxiosError } from 'axios';
 import FormData from 'form-data';
 import { logger } from '../utils/logger';
+import prisma from '../config/database';
+import { decrypt } from '../utils/crypto';
+
+export interface WhatsAppConfig {
+  apiUrl?: string;
+  accessToken?: string;
+  phoneNumberId?: string;
+}
+
+export class WhatsAppNotConfiguredError extends Error {
+  constructor() {
+    super('WhatsApp não configurado para esta organização');
+    this.name = 'WhatsAppNotConfiguredError';
+  }
+}
 
 // Erros transientes da API da Meta que justificam retry
 const TRANSIENT_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
@@ -45,15 +60,23 @@ async function withRetry<T>(
   throw lastError;
 }
 
-class WhatsAppService {
+export class WhatsAppService {
   private apiUrl: string;
   private accessToken: string;
   private phoneNumberId: string;
 
-  constructor() {
-    this.apiUrl = process.env.WHATSAPP_API_URL || 'https://graph.facebook.com/v18.0';
-    this.accessToken = process.env.WHATSAPP_ACCESS_TOKEN || '';
-    this.phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID || '';
+  /**
+   * Sem config explícita, cai no env global (uso em dev / fallback).
+   * Em produção multi-tenant, use `getWhatsAppClient(organizationId)`.
+   */
+  constructor(config?: WhatsAppConfig) {
+    this.apiUrl = config?.apiUrl || process.env.WHATSAPP_API_URL || 'https://graph.facebook.com/v18.0';
+    this.accessToken = config?.accessToken || process.env.WHATSAPP_ACCESS_TOKEN || '';
+    this.phoneNumberId = config?.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID || '';
+  }
+
+  isConfigured(): boolean {
+    return Boolean(this.accessToken && this.phoneNumberId);
   }
 
   async sendMessage(
@@ -61,9 +84,9 @@ class WhatsAppService {
     content: string,
     type: string = 'TEXT'
   ): Promise<any> {
-    if (!this.accessToken || !this.phoneNumberId) {
+    if (!this.isConfigured()) {
       logger.warn('WhatsApp credentials not configured');
-      return { success: false, error: 'WhatsApp not configured' };
+      throw new WhatsAppNotConfiguredError();
     }
 
     try {
@@ -116,9 +139,9 @@ class WhatsAppService {
     templateName: string,
     variables: string[] = []
   ): Promise<any> {
-    if (!this.accessToken || !this.phoneNumberId) {
+    if (!this.isConfigured()) {
       logger.warn('WhatsApp credentials not configured');
-      return { success: false, error: 'WhatsApp not configured' };
+      throw new WhatsAppNotConfiguredError();
     }
 
     try {
@@ -222,4 +245,52 @@ class WhatsAppService {
   }
 }
 
+// Instância global (env) — usada apenas como fallback de desenvolvimento.
 export const whatsappService = new WhatsAppService();
+
+/**
+ * Constrói um cliente WhatsApp com as credenciais da organização,
+ * decifrando o access token armazenado em repouso.
+ */
+export async function getWhatsAppClient(
+  organizationId: string
+): Promise<WhatsAppService> {
+  const org = await prisma.organization.findUnique({
+    where: { id: organizationId },
+    select: {
+      whatsappApiUrl: true,
+      whatsappAccessToken: true,
+      whatsappPhoneNumberId: true,
+    },
+  });
+
+  if (!org) {
+    return new WhatsAppService();
+  }
+
+  return new WhatsAppService({
+    apiUrl: org.whatsappApiUrl || undefined,
+    accessToken: decrypt(org.whatsappAccessToken) || undefined,
+    phoneNumberId: org.whatsappPhoneNumberId || undefined,
+  });
+}
+
+/** Atualiza o estado de saúde da conexão WhatsApp da organização. */
+export async function recordWhatsAppHealth(
+  organizationId: string,
+  status: 'CONNECTED' | 'ERROR' | 'NOT_CONFIGURED',
+  errorMessage?: string
+): Promise<void> {
+  try {
+    await prisma.organization.update({
+      where: { id: organizationId },
+      data: {
+        whatsappStatus: status,
+        whatsappLastError: status === 'ERROR' ? errorMessage?.slice(0, 500) || 'unknown' : null,
+        whatsappLastCheckedAt: new Date(),
+      },
+    });
+  } catch (error) {
+    logger.warn('Failed to record WhatsApp health', error);
+  }
+}

@@ -1,7 +1,8 @@
 import request from 'supertest';
 import express from 'express';
-import authRoutes from '../../src/routes/auth';
-import { prismaMock } from '../setup';
+import authRoutes from '../../../src/routes/auth';
+import { errorHandler } from '../../../src/middleware/errorHandler';
+import { prismaMock } from '../../setup';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 
@@ -12,6 +13,7 @@ jest.mock('jsonwebtoken');
 const app = express();
 app.use(express.json());
 app.use('/api/auth', authRoutes);
+app.use(errorHandler);
 
 describe('Auth Routes - Integration', () => {
   beforeEach(() => {
@@ -25,12 +27,16 @@ describe('Auth Routes - Integration', () => {
         email: 'admin@afeto.com',
         name: 'Admin',
         password: 'hashed',
-        role: 'ADMIN',
         avatar: null,
         isActive: true,
+        twoFactorEnabled: false,
       };
 
       prismaMock.user.findUnique.mockResolvedValue(mockUser as any);
+      prismaMock.organizationMember.findFirst.mockResolvedValue({
+        role: 'ADMIN',
+        organizationId: 'org1',
+      } as any);
       (bcrypt.compare as jest.Mock).mockResolvedValue(true);
       (jwt.sign as jest.Mock).mockReturnValue('valid-jwt-token');
 
@@ -75,7 +81,25 @@ describe('Auth Routes - Integration', () => {
         createdAt: new Date(),
       };
 
-      (jwt.verify as jest.Mock).mockReturnValue({ id: '1', email: 'admin@afeto.com' });
+      (jwt.verify as jest.Mock).mockReturnValue({
+        id: '1',
+        email: 'admin@afeto.com',
+        name: 'Admin',
+        role: 'ADMIN',
+        organizationId: 'org1',
+        jti: 'jti1',
+      });
+      // sessão válida (não revogada)
+      prismaMock.deviceSession.findUnique.mockResolvedValue({
+        id: 's1',
+        isValid: true,
+        expiresAt: new Date(Date.now() + 60_000),
+      } as any);
+      prismaMock.deviceSession.update.mockResolvedValue({} as any);
+      prismaMock.organizationMember.findFirst.mockResolvedValue({
+        role: 'ADMIN',
+        organizationId: 'org1',
+      } as any);
       prismaMock.user.findUnique.mockResolvedValue(mockUser as any);
 
       const response = await request(app)

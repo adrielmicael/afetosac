@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
-import { whatsappService } from '../services/whatsappService';
+import { getWhatsAppClient, recordWhatsAppHealth } from '../services/whatsappService';
 import { broadcastToChat } from '../services/realtimeService';
 
 const extractWhatsAppMessageId = (response: any): string | null => {
@@ -120,9 +120,16 @@ export const reopenWindowWithTemplate = async (
     // Enviar template via WhatsApp
     let whatsappMessageId: string | null = null;
     try {
-      const response = await whatsappService.sendTemplate(chat.phone, template.name, variables);
+      const wa = await getWhatsAppClient(organizationId);
+      const response = await wa.sendTemplate(chat.phone, template.name, variables);
       whatsappMessageId = extractWhatsAppMessageId(response);
+      await recordWhatsAppHealth(organizationId, 'CONNECTED');
     } catch (error) {
+      await recordWhatsAppHealth(
+        organizationId,
+        'ERROR',
+        (error as { message?: string })?.message
+      );
       const err = error as { message?: string };
       await prisma.activity.create({
         data: {

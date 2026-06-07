@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import prisma from '../config/database';
 import { whatsappService } from '../services/whatsappService';
+import { decrypt } from '../utils/crypto';
 import { logger } from '../utils/logger';
 import { processMessage, processFlowResponse } from './chatbotController';
 
@@ -10,15 +11,21 @@ type SocketLike = {
   emit: (event: string, payload: unknown) => void;
 };
 
-const isValidSignature = (rawBody: string | undefined, signature: string | undefined): boolean => {
-  const appSecret = process.env.WHATSAPP_APP_SECRET;
-
+/**
+ * Valida a assinatura HMAC-SHA256 do webhook usando o app secret fornecido.
+ * Em produção, sem secret disponível, rejeita. Em dev, libera (com aviso).
+ */
+const isValidSignature = (
+  rawBody: string | undefined,
+  signature: string | undefined,
+  appSecret: string | null
+): boolean => {
   if (!appSecret) {
     if (process.env.NODE_ENV === 'production') {
-      logger.error('WHATSAPP_APP_SECRET missing in production — rejecting webhook');
+      logger.error('App secret indisponível em produção — rejeitando webhook');
       return false;
     }
-    logger.warn('WHATSAPP_APP_SECRET not configured; webhook signature validation is disabled (dev only)');
+    logger.warn('App secret não configurado; validação de assinatura desabilitada (apenas dev)');
     return true;
   }
 
@@ -36,6 +43,37 @@ const isValidSignature = (rawBody: string | undefined, signature: string | undef
   }
 
   return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+};
+
+/** Extrai o primeiro phone_number_id presente no payload do webhook. */
+const extractPhoneNumberId = (body: any): string | undefined => {
+  if (body?.object !== 'whatsapp_business_account' || !Array.isArray(body.entry)) {
+    return undefined;
+  }
+  for (const entry of body.entry) {
+    for (const change of entry.changes || []) {
+      const id = change?.value?.metadata?.phone_number_id;
+      if (id) return id;
+    }
+  }
+  return undefined;
+};
+
+/**
+ * Resolve o app secret a usar na validação: o da organização dona do
+ * phone_number_id (cifrado em repouso) ou, na ausência, o global de fallback.
+ */
+const resolveAppSecret = async (phoneNumberId: string | undefined): Promise<string | null> => {
+  if (phoneNumberId) {
+    const org = await prisma.organization.findFirst({
+      where: { whatsappPhoneNumberId: phoneNumberId, status: 'ACTIVE' },
+      select: { whatsappAppSecret: true },
+    });
+    if (org?.whatsappAppSecret) {
+      return decrypt(org.whatsappAppSecret);
+    }
+  }
+  return process.env.WHATSAPP_APP_SECRET || null;
 };
 
 // Webhook verification for WhatsApp
@@ -82,13 +120,18 @@ export const receiveWebhook = async (
   next: NextFunction
 ) => {
   try {
+    const body = req.body;
     const signature = req.headers['x-hub-signature-256'] as string | undefined;
-    if (!isValidSignature(req.rawBody, signature)) {
+
+    // Resolve o app secret da organização dona do número antes de validar
+    const phoneNumberId = extractPhoneNumberId(body);
+    const appSecret = await resolveAppSecret(phoneNumberId);
+
+    if (!isValidSignature(req.rawBody, signature, appSecret)) {
       res.status(403).json({ success: false, error: 'Invalid webhook signature' });
       return;
     }
 
-    const body = req.body;
     const socketServer = req.app.get('io') as SocketLike | undefined;
 
     // Acknowledge receipt immediately
@@ -166,6 +209,14 @@ async function processIncomingMessage(
     const now = new Date();
     const windowExpires = new Date(now.getTime() + 24 * 60 * 60 * 1000); // +24h
 
+    // Contato (dono do número) — a conversa pertence ao telefone, não a um paciente
+    const contactRecord = await prisma.contact.upsert({
+      where: { organizationId_phone: { organizationId, phone } },
+      update: {},
+      create: { organizationId, phone, name },
+      select: { id: true },
+    });
+
     // Find or create chat
     let chat = await prisma.chat.findFirst({
       where: { phone, organizationId },
@@ -174,9 +225,10 @@ async function processIncomingMessage(
     let windowWasClosed = false;
 
     if (!chat) {
-      // Find patient by phone
-      const patient = await prisma.patient.findFirst({
-        where: { phone, organizationId },
+      // Pacientes vinculados a este contato; só define paciente "ativo" se for único
+      const patients = await prisma.patient.findMany({
+        where: { contactId: contactRecord.id, isActive: true },
+        select: { id: true },
       });
 
       chat = await prisma.chat.create({
@@ -186,14 +238,15 @@ async function processIncomingMessage(
           name,
           channel: 'WHATSAPP',
           status: 'WAITING',
-          patientId: patient?.id,
+          contactId: contactRecord.id,
+          patientId: patients.length === 1 ? patients[0].id : null,
           is24hOpen: true,
           windowExpires,
           lastMessageAt: now,
         },
       });
 
-      logger.info(`New chat created for ${phone}`);
+      logger.info(`New chat created for ${phone} (contact ${contactRecord.id}, ${patients.length} paciente(s))`);
     } else {
       // Check if window was closed before
       windowWasClosed = !chat.is24hOpen || Boolean(chat.windowExpires && now > chat.windowExpires);

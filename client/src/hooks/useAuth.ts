@@ -42,10 +42,16 @@ export const useAuth = () => {
     }
   };
 
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
-    toast.success('Logout realizado');
+  const handleLogout = async () => {
+    try {
+      await authApi.logout(); // revoga a sessão no servidor
+    } catch {
+      // segue com o logout local mesmo se a chamada falhar
+    } finally {
+      logout();
+      navigate('/login');
+      toast.success('Logout realizado');
+    }
   };
 
   return {

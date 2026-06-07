@@ -1,10 +1,11 @@
 import axios, { AxiosError } from 'axios';
-import { AuthResponse, LoginCredentials } from '../types';
+import { AuthResponse, LoginCredentials, DeviceSession } from '../types';
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
 
 const api = axios.create({
   baseURL: apiBaseUrl,
+  withCredentials: true, // envia/recebe o cookie de sessão httpOnly
   headers: {
     'Content-Type': 'application/json',
   },
@@ -39,9 +40,16 @@ api.interceptors.response.use(
 export const authApi = {
   login: (credentials: LoginCredentials) =>
     api.post<AuthResponse>('/auth/login', credentials),
+  verify2FA: (data: { challengeToken: string; token?: string; backupCode?: string }) =>
+    api.post<AuthResponse>('/2fa/login/verify', data),
   me: () => api.get<{ success: boolean; user: AuthResponse['user'] }>('/auth/me'),
   changePassword: (data: { currentPassword: string; newPassword: string }) =>
     api.post('/auth/change-password', data),
+  logout: () => api.post('/auth/logout'),
+  logoutAll: () => api.post('/auth/logout-all'),
+  listSessions: () =>
+    api.get<{ success: boolean; sessions: DeviceSession[] }>('/auth/sessions'),
+  revokeSession: (id: string) => api.delete(`/auth/sessions/${id}`),
 };
 
 // Chats API

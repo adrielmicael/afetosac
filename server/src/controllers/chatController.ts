@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
+import { Prisma } from '../../../src/generated/prisma';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
-import { whatsappService } from '../services/whatsappService';
 import { logger } from '../utils/logger';
 
 const getOrganizationId = (req: Request): string => {
@@ -21,10 +21,14 @@ export const getChats = async (
     const { status, search } = req.query;
     const organizationId = getOrganizationId(req);
 
-    const where: any = { organizationId };
+    const page = Math.max(1, parseInt((req.query.page as string) || '1', 10));
+    const limit = Math.min(100, Math.max(1, parseInt((req.query.limit as string) || '30', 10)));
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.ChatWhereInput = { organizationId };
 
     if (status && status !== 'all') {
-      where.status = status;
+      where.status = status as string;
     }
 
     if (search) {
@@ -34,26 +38,26 @@ export const getChats = async (
       ];
     }
 
-    const chats = await prisma.chat.findMany({
-      where,
-      include: {
-        agent: {
-          select: { id: true, name: true, avatar: true },
+    const [total, chats] = await Promise.all([
+      prisma.chat.count({ where }),
+      prisma.chat.findMany({
+        where,
+        skip,
+        take: limit,
+        include: {
+          agent: { select: { id: true, name: true, avatar: true } },
+          patient: { select: { id: true, name: true, age: true, therapies: true } },
+          tags: true,
+          _count: { select: { messages: true } },
         },
-        patient: {
-          select: { id: true, name: true, age: true, therapies: true },
-        },
-        tags: true,
-        _count: {
-          select: { messages: true },
-        },
-      },
-      orderBy: { lastMessageAt: 'desc' },
-    });
+        orderBy: { lastMessageAt: 'desc' },
+      }),
+    ]);
 
     res.json({
       success: true,
       chats,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     });
   } catch (error) {
     next(error);
@@ -74,6 +78,17 @@ export const getChatById = async (
       include: {
         agent: {
           select: { id: true, name: true, avatar: true },
+        },
+        // Contato (dono do número) com TODOS os seus pacientes — a atendente
+        // escolhe de qual paciente é o atendimento (ex.: vários filhos no mesmo nº)
+        contact: {
+          include: {
+            patients: {
+              where: { isActive: true },
+              select: { id: true, name: true, age: true, therapies: true },
+              orderBy: { name: 'asc' },
+            },
+          },
         },
         patient: {
           include: {

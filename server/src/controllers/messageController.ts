@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
-import { whatsappService } from '../services/whatsappService';
+import { getWhatsAppClient, recordWhatsAppHealth } from '../services/whatsappService';
 import { logger } from '../utils/logger';
 
 type OutboundTemplateInput = {
@@ -118,7 +118,8 @@ const sendTemplateOutbound = async (
   });
 
   try {
-    const response = await whatsappService.sendTemplate(chatPhone, template.name, variables);
+    const wa = await getWhatsAppClient(organizationId);
+    const response = await wa.sendTemplate(chatPhone, template.name, variables);
     const whatsappMessageId = extractWhatsAppMessageId(response);
 
     await prisma.message.update({
@@ -133,6 +134,8 @@ const sendTemplateOutbound = async (
     if (whatsappMessageId) {
       message.whatsappMessageId = whatsappMessageId;
     }
+
+    await recordWhatsAppHealth(organizationId, 'CONNECTED');
   } catch (error) {
     logger.error('Failed to send template:', error);
 
@@ -140,6 +143,12 @@ const sendTemplateOutbound = async (
       where: { id: message.id },
       data: { status: 'FAILED' },
     });
+
+    await recordWhatsAppHealth(
+      organizationId,
+      'ERROR',
+      (error as { message?: string })?.message
+    );
 
     await recordDeadLetter({
       organizationId,
@@ -335,7 +344,8 @@ export const sendMessage = async (
     // Send to WhatsApp if not internal
     if (!isInternal) {
       try {
-        const response = await whatsappService.sendMessage(chat.phone, content, type);
+        const wa = await getWhatsAppClient(organizationId);
+        const response = await wa.sendMessage(chat.phone, content, type);
         const whatsappMessageId = extractWhatsAppMessageId(response);
 
         await prisma.message.update({
@@ -350,6 +360,8 @@ export const sendMessage = async (
         if (whatsappMessageId) {
           message.whatsappMessageId = whatsappMessageId;
         }
+
+        await recordWhatsAppHealth(organizationId, 'CONNECTED');
       } catch (error) {
         logger.error('Failed to send WhatsApp message:', error);
 
@@ -357,6 +369,12 @@ export const sendMessage = async (
           where: { id: message.id },
           data: { status: 'FAILED' },
         });
+
+        await recordWhatsAppHealth(
+          organizationId,
+          'ERROR',
+          (error as { message?: string })?.message
+        );
 
         await recordDeadLetter({
           organizationId,

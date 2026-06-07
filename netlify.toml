@@ -1,7 +1,10 @@
 [build]
   # publish e functions são relativos à raiz do repositório (sem base)
   publish = "client/dist"
-  command = "npm run build:client && cd server && npx prisma generate"
+  # Netlify instala só as deps da raiz (e do server via postinstall). É preciso
+  # instalar as deps do client explicitamente (--include=dev garante tsc/vite,
+  # que são devDependencies) antes de buildar.
+  command = "npm install --prefix client --include=dev --legacy-peer-deps && npm run build:client && cd server && npx prisma generate"
   functions = "netlify/functions"
 
 [functions]
@@ -12,7 +15,18 @@
 [build.processing]
   skip_processing = false
 
-# API redirects - tudo vai para a função
+# API redirects
+#
+# IMPORTANTE: a função serverless usa o MESMO bootstrap (createApp) do backend
+# stateful, então tem paridade de segurança. Porém Socket.io (tempo real) e
+# rate limiting persistente NÃO funcionam em serverless efêmero.
+#
+# Produção recomendada: hospedar o backend stateful (Docker/K8s em k8s/) e
+# apontar /api/* para ele via variável API_BACKEND_URL, mantendo o Netlify
+# apenas para o frontend. Ex.:
+#   to = "https://api.seudominio.com/api/:splat"
+#
+# Fallback serverless (sem realtime):
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/api/:splat"

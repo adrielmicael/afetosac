@@ -13,8 +13,9 @@ export const forceHttps = (req: Request, res: Response, next: NextFunction) => {
     return next();
   }
   
-  // Verificar se é health check (não redirecionar)
-  if (req.path === '/health') {
+  // Health checks e /metrics nunca devem ser redirecionados —
+  // probes do K8s e scraping do Prometheus batem via HTTP interno.
+  if (req.path === '/health' || req.path.startsWith('/health/') || req.path === '/metrics') {
     return next();
   }
   

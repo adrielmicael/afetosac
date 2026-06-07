@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { Prisma } from '../../../src/generated/prisma';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 import { logger } from '../utils/logger';
@@ -21,7 +22,11 @@ export const getPatients = async (
     const { search, therapy } = req.query;
     const organizationId = getOrganizationId(req);
 
-    const where: any = { isActive: true, organizationId };
+    const page = Math.max(1, parseInt((req.query.page as string) || '1', 10));
+    const limit = Math.min(100, Math.max(1, parseInt((req.query.limit as string) || '30', 10)));
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.PatientWhereInput = { isActive: true, organizationId };
 
     if (search) {
       where.OR = [
@@ -37,20 +42,24 @@ export const getPatients = async (
       };
     }
 
-    const patients = await prisma.patient.findMany({
-      where,
-      include: {
-        therapies: true,
-        _count: {
-          select: { appointments: true, chats: true },
+    const [total, patients] = await Promise.all([
+      prisma.patient.count({ where }),
+      prisma.patient.findMany({
+        where,
+        skip,
+        take: limit,
+        include: {
+          therapies: true,
+          _count: { select: { appointments: true, chats: true } },
         },
-      },
-      orderBy: { name: 'asc' },
-    });
+        orderBy: { name: 'asc' },
+      }),
+    ]);
 
     res.json({
       success: true,
       patients,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     });
   } catch (error) {
     next(error);
@@ -351,6 +360,17 @@ export const getMedicalRecords = async (
       orderBy: { date: 'desc' },
     });
 
+    // 🔒 LGPD — acesso a prontuário é dado sensível: registrar
+    logDataAccess(
+      req.user!.id,
+      id,
+      'medical_record',
+      id,
+      'VIEW',
+      req.ip || 'unknown',
+      (req.headers['user-agent'] as string) || ''
+    );
+
     res.json({
       success: true,
       records,
@@ -387,6 +407,17 @@ export const createMedicalRecord = async (
         professional,
       },
     });
+
+    // 🔒 LGPD — criação de prontuário é dado sensível: registrar
+    logDataAccess(
+      req.user!.id,
+      id,
+      'medical_record',
+      record.id,
+      'CREATE',
+      req.ip || 'unknown',
+      (req.headers['user-agent'] as string) || ''
+    );
 
     logger.info(`Medical record created for patient ${id}`);
 

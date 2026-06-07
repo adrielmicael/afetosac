@@ -1,25 +1,52 @@
 import request from 'supertest';
 import express from 'express';
-import chatRoutes from '../../src/routes/chats';
-import { prismaMock } from '../setup';
+import chatRoutes from '../../../src/routes/chats';
+import { errorHandler } from '../../../src/middleware/errorHandler';
+import { prismaMock } from '../../setup';
 import jwt from 'jsonwebtoken';
 
 jest.mock('jsonwebtoken');
 
 const app = express();
 app.use(express.json());
-
-// Mock do middleware de autenticação
-app.use((req, res, next) => {
-  req.user = { id: '1', email: 'agent@test.com', name: 'Agent', role: 'AGENT' };
-  next();
-});
-
+// Stub do Socket.io usado pelos controllers
+app.set('io', { to: () => ({ emit: () => undefined }), emit: () => undefined });
 app.use('/api/chats', chatRoutes);
+app.use(errorHandler);
+
+// Helper: monta uma requisição já autenticada (Bearer + tenant header)
+const authed = (req: request.Test) =>
+  req.set('Authorization', 'Bearer test-token').set('x-organization-id', 'org1');
 
 describe('Chat Routes - Integration', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+
+    // Sessão autenticada válida (authenticate + extractTenant)
+    (jwt.verify as jest.Mock).mockReturnValue({
+      id: '1',
+      email: 'agent@test.com',
+      name: 'Agent',
+      role: 'AGENT',
+      organizationId: 'org1',
+      jti: 'jti1',
+    });
+    prismaMock.deviceSession.findUnique.mockResolvedValue({
+      id: 's1',
+      isValid: true,
+      expiresAt: new Date(Date.now() + 60_000),
+    } as any);
+    prismaMock.deviceSession.update.mockResolvedValue({} as any);
+    prismaMock.organization.findUnique.mockResolvedValue({
+      id: 'org1',
+      slug: 'clinica',
+      plan: 'PRO',
+      status: 'ACTIVE',
+    } as any);
+    prismaMock.organizationMember.findFirst.mockResolvedValue({
+      role: 'AGENT',
+      organizationId: 'org1',
+    } as any);
   });
 
   describe('GET /api/chats', () => {
@@ -41,7 +68,7 @@ describe('Chat Routes - Integration', () => {
 
       prismaMock.chat.findMany.mockResolvedValue(mockChats as any);
 
-      const response = await request(app).get('/api/chats');
+      const response = await authed(request(app).get('/api/chats'));
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
@@ -51,7 +78,7 @@ describe('Chat Routes - Integration', () => {
     it('deve filtrar por status', async () => {
       prismaMock.chat.findMany.mockResolvedValue([]);
 
-      const response = await request(app).get('/api/chats?status=WAITING');
+      const response = await authed(request(app).get('/api/chats?status=WAITING'));
 
       expect(response.status).toBe(200);
       expect(prismaMock.chat.findMany).toHaveBeenCalledWith(
@@ -64,7 +91,7 @@ describe('Chat Routes - Integration', () => {
     it('deve buscar por termo', async () => {
       prismaMock.chat.findMany.mockResolvedValue([]);
 
-      const response = await request(app).get('/api/chats?search=João');
+      const response = await authed(request(app).get('/api/chats?search=João'));
 
       expect(response.status).toBe(200);
       expect(prismaMock.chat.findMany).toHaveBeenCalledWith(
@@ -89,26 +116,27 @@ describe('Chat Routes - Integration', () => {
         tags: [],
       };
 
+      prismaMock.chat.findFirst.mockResolvedValue({ id: '1', firstResponseAt: null } as any);
       prismaMock.chat.update.mockResolvedValue(mockChat as any);
       prismaMock.message.create.mockResolvedValue({} as any);
 
-      const response = await request(app).post('/api/chats/1/assign');
+      const response = await authed(request(app).post('/api/chats/1/assign'));
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
       expect(prismaMock.chat.update).toHaveBeenCalledWith({
         where: { id: '1' },
-        data: { agentId: '1', status: 'IN_PROGRESS' },
+        data: expect.objectContaining({ agentId: '1', status: 'IN_PROGRESS' }),
         include: expect.any(Object),
       });
     });
 
-    it('deve retornar erro se chat não existe', async () => {
-      prismaMock.chat.update.mockRejectedValue(new Error('Chat not found'));
+    it('deve retornar 404 se chat não existe', async () => {
+      prismaMock.chat.findFirst.mockResolvedValue(null);
 
-      const response = await request(app).post('/api/chats/999/assign');
+      const response = await authed(request(app).post('/api/chats/999/assign'));
 
-      expect(response.status).toBe(500);
+      expect(response.status).toBe(404);
     });
   });
 
@@ -119,10 +147,11 @@ describe('Chat Routes - Integration', () => {
         status: 'CLOSED',
       };
 
+      prismaMock.chat.findFirst.mockResolvedValue({ id: '1' } as any);
       prismaMock.chat.update.mockResolvedValue(mockChat as any);
       prismaMock.message.create.mockResolvedValue({} as any);
 
-      const response = await request(app).post('/api/chats/1/close');
+      const response = await authed(request(app).post('/api/chats/1/close'));
 
       expect(response.status).toBe(200);
       expect(response.body.chat.status).toBe('CLOSED');

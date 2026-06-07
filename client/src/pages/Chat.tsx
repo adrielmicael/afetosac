@@ -11,11 +11,13 @@ import {
   Zap,
   Lock,
   Unlock,
+  UserRound,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { chatsApi, messagesApi, quickRepliesApi } from '../services/api';
 import { useChatStore, useAuthStore, useUIStore } from '../store';
 import { useSocket } from '../hooks/useSocket';
+import ContactPanel from '../components/ContactPanel';
 import toast from 'react-hot-toast';
 
 export default function Chat() {
@@ -181,8 +183,24 @@ export default function Chat() {
     }
   };
 
+  const handleSelectPatient = async (patientId: string) => {
+    if (!chatId || !activeChat) return;
+    try {
+      await chatsApi.linkPatient(chatId, patientId);
+      // Atualiza o paciente ativo localmente, preservando a lista do contato
+      setActiveChat({ ...activeChat, patientId });
+      const selected = activeChat.contact?.patients?.find((p) => p.id === patientId);
+      toast.success(`Atendimento de ${selected?.name ?? 'paciente'} selecionado`);
+    } catch (error) {
+      toast.error('Erro ao selecionar paciente');
+    }
+  };
+
   const currentMessages = chatId ? messages[chatId] || [] : [];
   const isTyping = chatId ? typingChats[chatId] : false;
+  const activePatient =
+    activeChat?.contact?.patients?.find((p) => p.id === activeChat?.patientId) ||
+    activeChat?.patient;
 
   return (
     <div className="flex h-[calc(100vh-8rem)] bg-white rounded-xl shadow-sm overflow-hidden">
@@ -288,7 +306,15 @@ export default function Chat() {
                   </span>
                 </div>
                 <div>
-                  <h2 className="font-semibold text-gray-900">{activeChat.name}</h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-semibold text-gray-900">{activeChat.name}</h2>
+                    {activePatient && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-primary-50 px-2 py-0.5 text-xs font-medium text-primary-700 ring-1 ring-primary-100">
+                        <UserRound className="h-3 w-3" />
+                        {activePatient.name}
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2">
                     {isTyping ? (
                       <p className="text-sm text-primary-600 italic">Digitando...</p>
@@ -489,6 +515,15 @@ export default function Chat() {
           </div>
         )}
       </div>
+
+      {/* Painel: Contato & Pacientes */}
+      {activeChat && (
+        <ContactPanel
+          contact={activeChat.contact}
+          activePatientId={activeChat.patientId}
+          onSelectPatient={handleSelectPatient}
+        />
+      )}
     </div>
   );
 }

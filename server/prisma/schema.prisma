@@ -25,16 +25,29 @@ model Organization {
   status      String   @default("ACTIVE") // ACTIVE, SUSPENDED, CANCELLED
   settings    String?  // JSON com configurações específicas
   
-  // WhatsApp Config (por organização)
+  // WhatsApp Config (por organização) — segredos cifrados em repouso (AES-256-GCM)
   whatsappApiUrl        String?
   whatsappAccessToken   String?
   whatsappPhoneNumberId String?
   whatsappWebhookVerifyToken String?
+  whatsappAppSecret     String? // App Secret da Meta (cifrado) para validar assinatura do webhook
+  // Saúde da conexão WhatsApp
+  whatsappStatus        String?   // CONNECTED, ERROR, NOT_CONFIGURED
+  whatsappLastError     String?
+  whatsappLastCheckedAt DateTime?
   
   // Limites do plano
   maxUsers      Int @default(3)
   maxChats      Int @default(100)
   maxStorageGB  Int @default(1)
+
+  // Integração Afeto Clinic (SSO + provisionamento por tenant)
+  externalId         String?  @unique // id do tenant no Afeto Clinic
+  afetoClinicSecret  String?          // segredo HMAC (cifrado) da integração inbound
+  afetoClinicEnabled Boolean  @default(false)
+  // Leitura/sync via Supabase REST do Afeto Clinic (por tenant)
+  afetoClinicSupabaseUrl String?      // ex: https://xxxx.supabase.co
+  afetoClinicSupabaseKey String?      // anon/service key (cifrada em repouso)
   
   // Stripe Billing
   stripeCustomerId     String?  @unique
@@ -46,6 +59,7 @@ model Organization {
   
   // Relations
   members      OrganizationMember[]
+  contacts     Contact[]
   patients     Patient[]
   chats        Chat[]
   therapies    Therapy[]
@@ -58,7 +72,8 @@ model Organization {
   lgpdRequests LGPDRequest[]
   apiKeys      ApiKey[]
   webhookEndpoints WebhookEndpoint[]
-  
+  usageMetrics UsageMetric[]
+
   @@index([slug])
   @@index([status])
   @@index([plan])
@@ -120,15 +135,39 @@ model User {
 }
 
 // ==========================================
-// PATIENT (Por organização)
+// CONTACT (dono do telefone / conversa de WhatsApp)
+// Um Contato pode ter vários Pacientes (ex.: responsável com vários filhos)
+// ==========================================
+
+model Contact {
+  id             String   @id @default(uuid())
+  organizationId String
+  phone          String
+  name           String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  patients     Patient[]
+  chats        Chat[]
+
+  @@unique([organizationId, phone]) // telefone é único por organização (identidade da conversa)
+  @@index([organizationId])
+  @@map("contacts")
+}
+
+// ==========================================
+// PATIENT (Por organização) — vinculado a um Contato
 // ==========================================
 
 model Patient {
   id             String    @id @default(uuid())
   organizationId String
+  contactId      String?   // dono do telefone (responsável)
+  externalId     String?   // id do paciente no Afeto Clinic (identidade de sync)
   name           String
   age            String?
-  phone          String    // Não é mais unique global
+  phone          String?   // referência; a identidade da conversa é o Contato
   email          String?
   responsible    String?
   allergies      String?
@@ -138,9 +177,10 @@ model Patient {
   anonymizedAt   DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
-  
+
   // Relations
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contact      Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
   therapies    Therapy[]
   chats        Chat[]
   appointments Appointment[]
@@ -150,9 +190,11 @@ model Patient {
   exportLogs   DataExportLog[]
   deletionLog  DataDeletionLog?
   lgpdRequests LGPDRequest[]
-  
-  @@unique([organizationId, phone]) // Phone é unique por organização
+
+  @@unique([organizationId, externalId]) // identidade de sync com o Afeto Clinic
   @@index([organizationId])
+  @@index([organizationId, phone])
+  @@index([contactId])
   @@index([name])
   @@index([isActive])
   @@map("patients")
@@ -188,7 +230,8 @@ model Chat {
   channel        String   @default("WHATSAPP")
   status         String   @default("WAITING") // WAITING, IN_PROGRESS, CLOSED
   agentId        String?
-  patientId      String?
+  contactId      String?  // dono do telefone/conversa
+  patientId      String?  // paciente "ativo" do atendimento (escolhido pela atendente)
   slaConfigId    String?
   is24hOpen        Boolean   @default(true)
   windowExpires    DateTime?
@@ -202,13 +245,15 @@ model Chat {
   // Relations
   organization    Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   agent           User?            @relation(fields: [agentId], references: [id])
+  contact         Contact?         @relation(fields: [contactId], references: [id], onDelete: SetNull)
   patient         Patient?         @relation(fields: [patientId], references: [id])
   slaConfig       SLAConfig?       @relation(fields: [slaConfigId], references: [id])
   messages        Message[]
   tags            Tag[]
   chatbotSessions ChatbotSession[]
-  
+
   @@index([organizationId])
+  @@index([contactId])
   @@index([organizationId, phone])
   @@index([organizationId, status])
   @@index([organizationId, agentId])
@@ -690,6 +735,97 @@ model WebhookEndpoint {
   @@index([organizationId])
   @@index([isActive])
   @@map("webhook_endpoints")
+}
+
+// ==========================================
+// PLATFORM (SaaS) - Super-admin acima dos tenants
+// ==========================================
+
+model PlatformAdmin {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String
+  password  String
+  role      String   @default("SUPPORT") // SUPERADMIN, SUPPORT, BILLING, READONLY
+  isActive  Boolean  @default(true)
+
+  // 2FA (obrigatório para operadores de plataforma)
+  twoFactorEnabled     Boolean @default(false)
+  twoFactorSecret      String?
+  twoFactorBackupCodes String?
+
+  lastLoginAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  sessions  PlatformSession[]
+  auditLogs PlatformAuditLog[]
+
+  @@index([email])
+  @@index([role])
+  @@map("platform_admins")
+}
+
+model PlatformSession {
+  id              String   @id @default(uuid())
+  platformAdminId String
+  token           String   @unique // jti do JWT
+  ipAddress       String
+  userAgent       String
+  isValid         Boolean  @default(true)
+  lastUsedAt      DateTime @default(now())
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+
+  admin PlatformAdmin @relation(fields: [platformAdminId], references: [id], onDelete: Cascade)
+
+  @@index([platformAdminId])
+  @@index([token])
+  @@index([isValid])
+  @@map("platform_sessions")
+}
+
+model PlatformAuditLog {
+  id              String   @id @default(uuid())
+  platformAdminId String?
+  actorEmail      String
+  action          String   // LOGIN, IMPERSONATE, ORG_SUSPEND, PLAN_CHANGE, ...
+  targetType      String?  // ORGANIZATION, USER, PLATFORM
+  targetId        String?
+  organizationId  String?
+  before          String?  // JSON do estado anterior
+  after           String?  // JSON do estado posterior
+  ipAddress       String
+  userAgent       String
+  createdAt       DateTime @default(now())
+
+  admin PlatformAdmin? @relation(fields: [platformAdminId], references: [id], onDelete: SetNull)
+
+  @@index([platformAdminId])
+  @@index([action])
+  @@index([organizationId])
+  @@index([createdAt])
+  @@map("platform_audit_logs")
+}
+
+model UsageMetric {
+  id             String   @id @default(uuid())
+  organizationId String
+  period         String   // 'YYYY-MM'
+  messagesIn     Int      @default(0)
+  messagesOut    Int      @default(0)
+  activeUsers    Int      @default(0)
+  chatsTotal     Int      @default(0)
+  patientsTotal  Int      @default(0)
+  storageMb      Int      @default(0)
+  computedAt     DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, period])
+  @@index([organizationId])
+  @@index([period])
+  @@map("usage_metrics")
 }
 
 // ==========================================
