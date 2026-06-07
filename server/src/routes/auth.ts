@@ -4,6 +4,7 @@ import {
   validateLogin,
   login,
   me,
+  updateProfile,
   changePassword,
   logout,
   logoutAll,
@@ -15,6 +16,7 @@ const router = Router();
 
 router.post('/login', validateLogin, login);
 router.get('/me', authenticate, me);
+router.patch('/profile', authenticate, updateProfile);
 router.post('/change-password', authenticate, changePassword);
 
 // Gestão de sessão / dispositivos

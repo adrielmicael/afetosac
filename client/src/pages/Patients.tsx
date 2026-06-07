@@ -236,16 +236,16 @@ export default function Patients() {
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">ResponsÃ¡vel</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Responsável</label>
                   <input type="text" value={formData.responsible} onChange={f('responsible')}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
                 </div>
               </div>
 
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider pt-2">Dados ClÃ­nicos</p>
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider pt-2">Dados Clínicos</p>
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">DiagnÃ³stico</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Diagnóstico</label>
                   <input type="text" value={formData.diagnosis} onChange={f('diagnosis')}
                     placeholder="Ex: TEA, TDAH..."
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
@@ -256,12 +256,12 @@ export default function Patients() {
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Plano de SaÃºde</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Plano de Saúde</label>
                   <input type="text" value={formData.healthPlan} onChange={f('healthPlan')}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">ObservaÃ§Ãµes</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Observações</label>
                   <textarea value={formData.notes} onChange={f('notes')} rows={3}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none" />
                 </div>
@@ -274,7 +274,7 @@ export default function Patients() {
                 </button>
                 <button type="submit"
                   className="flex-1 py-2 bg-primary-600 text-white rounded-lg text-sm hover:bg-primary-700 transition-colors">
-                  {editingPatient ? 'Salvar AlteraÃ§Ãµes' : 'Criar Paciente'}
+                  {editingPatient ? 'Salvar Alterações' : 'Criar Paciente'}
                 </button>
               </div>
             </form>

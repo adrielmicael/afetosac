@@ -134,7 +134,7 @@ export default function Dashboard() {
                 <Icon className={`w-5 h-5 ${card.text}`} />
               </div>
               <p className="text-2xl font-bold text-gray-900">
-                {isLoading ? 'â€”' : card.value.toLocaleString('pt-BR')}
+                {isLoading ? '—' : card.value.toLocaleString('pt-BR')}
               </p>
               <p className="text-xs text-gray-500 mt-1">{card.name}</p>
             </Link>
@@ -246,22 +246,12 @@ export default function Dashboard() {
               to="/reports"
               className="w-full flex items-center justify-center gap-2 px-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors"
             >
-              <BarChart2 className="w-4 h-4" /> Ver RelatÃ³rios
+              <BarChart2 className="w-4 h-4" /> Ver Relatórios
             </Link>
           </div>
         </div>
       </div>
     </div>
   );
-}
-
-
-interface DashboardStats {
-  totalChats: number;
-  activeChats: number;
-  waitingChats: number;
-  totalPatients: number;
-  totalMessages: number;
-  todayMessages: number;
 }
 

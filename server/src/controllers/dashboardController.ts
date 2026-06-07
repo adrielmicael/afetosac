@@ -132,14 +132,14 @@ export const getReports = async (
       // Tempo médio de primeira resposta (em minutos)
       prisma.$queryRaw<{ avg_minutes: number }[]>`
         SELECT COALESCE(AVG(
-          EXTRACT(EPOCH FROM (first_reply.created_at - c.created_at)) / 60
+          EXTRACT(EPOCH FROM (first_reply."createdAt" - c."createdAt")) / 60
         ), 0) as avg_minutes
-        FROM "Chat" c
+        FROM "chats" c
         INNER JOIN LATERAL (
-          SELECT m.created_at
-          FROM "Message" m
+          SELECT m."createdAt"
+          FROM "messages" m
           WHERE m."chatId" = c.id AND m.sender = 'AGENT'
-          ORDER BY m.created_at ASC LIMIT 1
+          ORDER BY m."createdAt" ASC LIMIT 1
         ) first_reply ON true
         WHERE c."organizationId" = ${organizationId}
           AND c."createdAt" >= ${start}
@@ -148,7 +148,7 @@ export const getReports = async (
       // Chats por dia
       prisma.$queryRaw<{ day: string; count: bigint }[]>`
         SELECT DATE("createdAt") as day, COUNT(*) as count
-        FROM "Chat"
+        FROM "chats"
         WHERE "organizationId" = ${organizationId}
           AND "createdAt" >= ${start}
           AND "createdAt" <= ${end}

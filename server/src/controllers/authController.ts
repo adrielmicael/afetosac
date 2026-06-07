@@ -193,6 +193,37 @@ export const me = async (req: Request, res: Response, next: NextFunction) => {
   }
 };
 
+export const updateProfile = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    if (!req.user) {
+      throw new AppError('Not authenticated', 401);
+    }
+
+    const { name, avatar } = req.body;
+    const data: { name?: string; avatar?: string | null } = {};
+    if (typeof name === 'string' && name.trim()) data.name = name.trim();
+    if (avatar !== undefined) data.avatar = avatar || null;
+
+    if (Object.keys(data).length === 0) {
+      throw new AppError('Nada para atualizar', 400);
+    }
+
+    const user = await prisma.user.update({
+      where: { id: req.user.id },
+      data,
+      select: { id: true, email: true, name: true, avatar: true },
+    });
+
+    res.json({ success: true, user });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const changePassword = async (
   req: Request,
   res: Response,

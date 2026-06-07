@@ -20,7 +20,8 @@ import {
   CheckCircle2,
   Loader2,
 } from 'lucide-react';
-import api from '../services/api';
+import api, { authApi, organizationsApi } from '../services/api';
+import AfetoClinicSection from '../components/AfetoClinicSection';
 import toast from 'react-hot-toast';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -247,9 +248,12 @@ function IntegrationsTab() {
       <div>
         <h2 className="text-lg font-semibold text-slate-900">Integrações &amp; API</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Gerencie chaves de API e endpoints de webhook para integrar sistemas externos.
+          Conecte ao Afeto Clinic e gerencie chaves de API e webhooks.
         </p>
       </div>
+
+      {/* Integração Afeto Clinic (importação de pacientes) */}
+      <AfetoClinicSection />
 
       {/* ── API Keys ── */}
       <section className="space-y-4">
@@ -511,10 +515,265 @@ function IntegrationsTab() {
   );
 }
 
+// ─── Profile Tab ──────────────────────────────────────────────────────────────
+
+function ProfileTab() {
+  const { user, token, setAuth } = useAuthStore();
+  const [name, setName] = useState(user?.name || '');
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (!name.trim()) return toast.error('Informe o nome');
+    setSaving(true);
+    try {
+      const { data } = await authApi.updateProfile({ name: name.trim() });
+      if (user && token) setAuth({ ...user, name: data.user.name }, token);
+      toast.success('Perfil atualizado');
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Erro ao salvar');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-lg font-semibold text-slate-900">Informações do Perfil</h2>
+      <div className="flex items-center gap-4">
+        <div className="flex h-20 w-20 items-center justify-center rounded-full bg-teal-100 text-2xl font-semibold text-teal-700">
+          {(name || user?.email || '?').charAt(0).toUpperCase()}
+        </div>
+        <div className="text-sm text-slate-500">{user?.role}</div>
+      </div>
+      <div className="grid max-w-xl grid-cols-1 gap-4 sm:grid-cols-2">
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Nome</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">E-mail</label>
+          <input
+            value={user?.email || ''}
+            disabled
+            className="w-full cursor-not-allowed rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-500"
+          />
+        </div>
+      </div>
+      <div className="flex justify-end max-w-xl">
+        <button
+          onClick={save}
+          disabled={saving}
+          className="flex items-center gap-2 rounded-lg bg-teal-600 px-6 py-2 font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
+        >
+          {saving && <Loader2 className="h-4 w-4 animate-spin" />} Salvar
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Security Tab (trocar senha) ──────────────────────────────────────────────
+
+function SecurityTab() {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const strong = next.length >= 10 && /[a-z]/.test(next) && /[A-Z]/.test(next) && /[0-9]/.test(next);
+
+  const submit = async () => {
+    if (!current || !next) return toast.error('Preencha os campos');
+    if (!strong) return toast.error('A nova senha precisa de 10+ caracteres com maiúscula, minúscula e número');
+    if (next !== confirm) return toast.error('As senhas não conferem');
+    setSaving(true);
+    try {
+      await authApi.changePassword({ currentPassword: current, newPassword: next });
+      toast.success('Senha alterada com sucesso');
+      setCurrent('');
+      setNext('');
+      setConfirm('');
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Erro ao alterar senha');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputCls =
+    'w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20';
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-lg font-semibold text-slate-900">Alterar Senha</h2>
+      <div className="max-w-md space-y-4">
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Senha atual</label>
+          <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} className={inputCls} />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Nova senha</label>
+          <input type="password" value={next} onChange={(e) => setNext(e.target.value)} className={inputCls} />
+          {next && (
+            <p className={`mt-1 text-xs ${strong ? 'text-emerald-600' : 'text-amber-600'}`}>
+              {strong ? '✓ Senha forte' : 'Mínimo 10 caracteres com maiúscula, minúscula e número'}
+            </p>
+          )}
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Confirmar nova senha</label>
+          <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className={inputCls} />
+        </div>
+      </div>
+      <div className="flex max-w-md justify-end">
+        <button
+          onClick={submit}
+          disabled={saving}
+          className="flex items-center gap-2 rounded-lg bg-teal-600 px-6 py-2 font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
+        >
+          {saving && <Loader2 className="h-4 w-4 animate-spin" />} Alterar senha
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── WhatsApp Tab ─────────────────────────────────────────────────────────────
+
+function WhatsAppTab() {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [cfg, setCfg] = useState<any>(null);
+  const [accessToken, setAccessToken] = useState('');
+  const [phoneNumberId, setPhoneNumberId] = useState('');
+  const [verifyToken, setVerifyToken] = useState('');
+  const [appSecret, setAppSecret] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await organizationsApi.getWhatsApp();
+      setCfg(data.whatsapp);
+      setPhoneNumberId(data.whatsapp.phoneNumberId || '');
+    } catch {
+      toast.error('Erro ao carregar configuração');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await organizationsApi.updateWhatsApp({
+        phoneNumberId: phoneNumberId.trim() || undefined,
+        ...(accessToken.trim() ? { accessToken: accessToken.trim() } : {}),
+        ...(verifyToken.trim() ? { webhookVerifyToken: verifyToken.trim() } : {}),
+        ...(appSecret.trim() ? { appSecret: appSecret.trim() } : {}),
+      });
+      toast.success('Configuração do WhatsApp salva');
+      setAccessToken('');
+      setVerifyToken('');
+      setAppSecret('');
+      await load();
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Erro ao salvar');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputCls =
+    'w-full rounded-lg border border-slate-300 px-3 py-2 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20';
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-10 text-slate-400">
+        <Loader2 className="h-5 w-5 animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-slate-900">WhatsApp Business</h2>
+        {cfg?.configured && (
+          <span
+            className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+              cfg.status === 'ERROR' ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-700'
+            }`}
+          >
+            {cfg.status === 'ERROR' ? 'Erro' : 'Configurado'}
+          </span>
+        )}
+      </div>
+
+      <div className="rounded-lg bg-teal-50 p-4 text-sm text-teal-800">
+        Credenciais da API do WhatsApp Business (Meta Cloud API). Os segredos são guardados cifrados.
+      </div>
+
+      <div className="max-w-xl space-y-4">
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">
+            Access Token {cfg?.accessToken && <span className="text-slate-400">— atual: {cfg.accessToken}</span>}
+          </label>
+          <input
+            type="password"
+            value={accessToken}
+            onChange={(e) => setAccessToken(e.target.value)}
+            placeholder={cfg?.accessToken ? 'deixe em branco para manter' : 'EAAB...'}
+            className={inputCls}
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">Phone Number ID</label>
+          <input value={phoneNumberId} onChange={(e) => setPhoneNumberId(e.target.value)} placeholder="1234567890" className={inputCls} />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">
+            Webhook Verify Token {cfg?.webhookVerifyToken && <span className="text-slate-400">— definido</span>}
+          </label>
+          <input value={verifyToken} onChange={(e) => setVerifyToken(e.target.value)} placeholder="seu_token_de_verificacao" className={inputCls} />
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium text-slate-700">
+            App Secret {cfg?.appSecret && <span className="text-slate-400">— atual: {cfg.appSecret}</span>}
+          </label>
+          <input
+            type="password"
+            value={appSecret}
+            onChange={(e) => setAppSecret(e.target.value)}
+            placeholder={cfg?.appSecret ? 'deixe em branco para manter' : 'valida a assinatura do webhook'}
+            className={inputCls}
+          />
+        </div>
+      </div>
+
+      <div className="flex max-w-xl justify-end">
+        <button
+          onClick={save}
+          disabled={saving}
+          className="flex items-center gap-2 rounded-lg bg-teal-600 px-6 py-2 font-semibold text-white hover:bg-teal-700 disabled:opacity-60"
+        >
+          {saving && <Loader2 className="h-4 w-4 animate-spin" />} Salvar configurações
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function Settings() {
-  const { user } = useAuthStore();
   const [activeTab, setActiveTab] = useState('profile');
 
   const tabs = [
@@ -557,145 +816,9 @@ export default function Settings() {
 
         {/* Content */}
         <div className="flex-1 bg-white rounded-xl shadow-sm p-6">
-          {activeTab === 'profile' && (
-            <div className="space-y-6">
-              <h2 className="text-lg font-semibold">Informações do Perfil</h2>
-              
-              <div className="flex items-center gap-4">
-                <div className="w-20 h-20 bg-primary-100 rounded-full flex items-center justify-center">
-                  <span className="text-2xl font-medium text-primary-700">
-                    {user?.name?.charAt(0)}
-                  </span>
-                </div>
-                <button className="px-4 py-2 text-primary-600 border border-primary-600 rounded-lg hover:bg-primary-50 transition-colors">
-                  Alterar Foto
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Nome
-                  </label>
-                  <input
-                    type="text"
-                    defaultValue={user?.name}
-                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Email
-                  </label>
-                  <input
-                    type="email"
-                    defaultValue={user?.email}
-                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-end">
-                <button className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors">
-                  Salvar Alterações
-                </button>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'whatsapp' && (
-            <div className="space-y-6">
-              <h2 className="text-lg font-semibold">Configuração do WhatsApp</h2>
-              
-              <div className="p-4 bg-blue-50 rounded-lg">
-                <p className="text-sm text-blue-800">
-                  Configure as credenciais da API do WhatsApp Business para enviar e receber mensagens.
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Access Token
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="EAAB..."
-                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Phone Number ID
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="1234567890"
-                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Webhook Verify Token
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="seu_token_aqui"
-                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-end">
-                <button className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors">
-                  Salvar Configurações
-                </button>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'security' && (
-            <div className="space-y-6">
-              <h2 className="text-lg font-semibold">Alterar Senha</h2>
-
-              <div className="space-y-4 max-w-md">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Senha Atual
-                  </label>
-                  <input
-                    type="password"
-                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Nova Senha
-                  </label>
-                  <input
-                    type="password"
-                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Confirmar Nova Senha
-                  </label>
-                  <input
-                    type="password"
-                    className="w-full px-3 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-end">
-                <button className="px-6 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors">
-                  Alterar Senha
-                </button>
-              </div>
-            </div>
-          )}
-
+          {activeTab === 'profile' && <ProfileTab />}
+          {activeTab === 'whatsapp' && <WhatsAppTab />}
+          {activeTab === 'security' && <SecurityTab />}
           {activeTab === 'integrations' && <IntegrationsTab />}
 
           {['notifications', 'team', 'appearance'].includes(activeTab) && (

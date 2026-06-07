@@ -156,6 +156,17 @@ export default function Reports() {
 
       {isLoading ? (
         <div className="flex items-center justify-center h-64 text-gray-400">Carregando relatório...</div>
+      ) : !report ? (
+        <div className="flex flex-col items-center justify-center h-64 text-gray-400 gap-2">
+          <BarChart2 className="w-8 h-8 text-gray-300" />
+          <p className="text-sm">Não foi possível carregar os relatórios.</p>
+          <button
+            onClick={() => load(period, customStart, customEnd)}
+            className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+          >
+            Tentar novamente
+          </button>
+        </div>
       ) : (
         <>
           {/* Cards de resumo */}

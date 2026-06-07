@@ -43,6 +43,8 @@ export const authApi = {
   verify2FA: (data: { challengeToken: string; token?: string; backupCode?: string }) =>
     api.post<AuthResponse>('/2fa/login/verify', data),
   me: () => api.get<{ success: boolean; user: AuthResponse['user'] }>('/auth/me'),
+  updateProfile: (data: { name?: string; avatar?: string }) =>
+    api.patch<{ success: boolean; user: AuthResponse['user'] }>('/auth/profile', data),
   changePassword: (data: { currentPassword: string; newPassword: string }) =>
     api.post('/auth/change-password', data),
   logout: () => api.post('/auth/logout'),
@@ -50,6 +52,37 @@ export const authApi = {
   listSessions: () =>
     api.get<{ success: boolean; sessions: DeviceSession[] }>('/auth/sessions'),
   revokeSession: (id: string) => api.delete(`/auth/sessions/${id}`),
+};
+
+// Organizations API (config da clínica: WhatsApp, Afeto Clinic)
+export const organizationsApi = {
+  getCurrent: () => api.get<{ success: boolean; organization: any }>('/organizations/current'),
+  getWhatsApp: () => api.get<{ success: boolean; whatsapp: any }>('/organizations/whatsapp'),
+  updateWhatsApp: (data: {
+    apiUrl?: string;
+    phoneNumberId?: string;
+    accessToken?: string;
+    webhookVerifyToken?: string;
+    appSecret?: string;
+  }) => api.put('/organizations/whatsapp', data),
+  getAfetoClinic: () => api.get<{ success: boolean; afetoClinic: any }>('/organizations/afeto-clinic'),
+  updateAfetoClinic: (data: {
+    externalId?: string;
+    enabled?: boolean;
+    supabaseUrl?: string;
+    supabaseKey?: string;
+    regenerateSecret?: boolean;
+  }) => api.put('/organizations/afeto-clinic', data),
+  testClinicSupabase: (table?: string) =>
+    api.get<{ success: boolean; ok: boolean; columns: string[]; rowCount: number | null }>(
+      '/organizations/afeto-clinic/supabase/test',
+      { params: table ? { table } : {} }
+    ),
+  syncClinicPatients: (data?: { table?: string; dryRun?: boolean }) =>
+    api.post<{ success: boolean; total: number; eligible: number; upserted: number; contacts: number; skipped: number; dryRun: boolean; tenantFiltered: boolean }>(
+      '/organizations/afeto-clinic/supabase/sync-patients',
+      data || {}
+    ),
 };
 
 // Chats API
